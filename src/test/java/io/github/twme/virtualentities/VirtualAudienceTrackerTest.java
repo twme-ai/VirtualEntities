@@ -1,7 +1,7 @@
 package io.github.twme.virtualentities;
 
-import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
-import com.github.retrooper.packetevents.protocol.entity.type.StaticEntityType;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
@@ -34,14 +34,14 @@ class VirtualAudienceTrackerTest {
     @Test
     void reconcilesVisibilityDisconnectsAndTransportReplacement() {
         VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1200))
-                .entity(testType())
+                .entity(EntityTypes.PIG)
                 .build()
                 .spawn(new Location(0, 64, 0, 0, 0));
         Candidate first = candidate(true);
         Candidate second = candidate(true);
         VirtualAudienceTracker<Candidate> tracker = VirtualAudienceTracker.of(
                 entity,
-                candidate -> VirtualViewer.of(candidate.id(), candidate.packets()::add),
+                candidate -> VirtualViewer.of(candidate.id(), candidate.version(), candidate.packets()::add),
                 Candidate::visible
         );
 
@@ -50,7 +50,7 @@ class VirtualAudienceTrackerTest {
         tracker.update(first);
         assertEquals(1, first.packets().size());
 
-        Candidate hiddenFirst = new Candidate(first.id(), first.packets(), false);
+        Candidate hiddenFirst = new Candidate(first.id(), first.packets(), false, first.version());
         assertFalse(tracker.update(hiddenFirst));
         assertInstanceOf(WrapperPlayServerDestroyEntities.class, first.packets().get(1));
 
@@ -73,14 +73,14 @@ class VirtualAudienceTrackerTest {
         UUID viewerId = UUID.randomUUID();
         List<PacketWrapper<?>> packets = new ArrayList<>();
         VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1250))
-                .entity(testType())
+                .entity(EntityTypes.PIG)
                 .build()
                 .addViewer(VirtualViewer.of(viewerId, packets::add))
                 .spawn(new Location(0, 64, 0, 0, 0));
-        Candidate candidate = new Candidate(viewerId, new ArrayList<>(), true);
+        Candidate candidate = new Candidate(viewerId, new ArrayList<>(), true, ClientVersion.V_1_21_11);
         VirtualAudienceTracker<Candidate> tracker = VirtualAudienceTracker.of(
                 entity,
-                value -> VirtualViewer.of(value.id(), value.packets()::add),
+                value -> VirtualViewer.of(value.id(), value.version(), value.packets()::add),
                 Candidate::visible
         );
 
@@ -92,14 +92,51 @@ class VirtualAudienceTrackerTest {
         assertTrue(candidate.packets().isEmpty());
     }
 
+    @Test
+    void excludesUnsupportedCandidatesWithoutMembershipChurn() {
+        VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1275))
+                .entity(EntityTypes.TEXT_DISPLAY)
+                .build()
+                .spawn(new Location(0, 64, 0, 0, 0));
+        UUID viewerId = UUID.randomUUID();
+        List<PacketWrapper<?>> packets = new ArrayList<>();
+        Candidate legacy = new Candidate(viewerId, packets, true, ClientVersion.V_1_19_3);
+        VirtualAudienceTracker<Candidate> tracker = VirtualAudienceTracker.of(
+                entity,
+                candidate -> VirtualViewer.of(candidate.id(), candidate.version(), candidate.packets()::add),
+                Candidate::visible
+        );
+
+        assertFalse(tracker.update(legacy));
+        tracker.reconcile(List.of(legacy));
+        tracker.reconcile(List.of(legacy));
+        assertTrue(tracker.trackedViewerIds().isEmpty());
+        assertFalse(entity.hasViewer(viewerId));
+        assertTrue(packets.isEmpty());
+
+        Candidate supported = new Candidate(viewerId, packets, true, ClientVersion.V_1_19_4);
+        assertTrue(tracker.update(supported));
+        assertTrue(tracker.trackedViewerIds().contains(viewerId));
+        assertTrue(entity.hasViewer(viewerId));
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, packets.get(0));
+
+        assertFalse(tracker.update(legacy));
+        assertTrue(tracker.trackedViewerIds().isEmpty());
+        assertFalse(entity.hasViewer(viewerId));
+        assertInstanceOf(WrapperPlayServerDestroyEntities.class, packets.get(1));
+        tracker.reconcile(List.of(legacy));
+        assertEquals(2, packets.size());
+    }
+
     private static Candidate candidate(boolean visible) {
-        return new Candidate(UUID.randomUUID(), new ArrayList<>(), visible);
+        return new Candidate(UUID.randomUUID(), new ArrayList<>(), visible, ClientVersion.V_1_21_11);
     }
 
-    private static EntityType testType() {
-        return new StaticEntityType(null, null);
-    }
-
-    private record Candidate(UUID id, List<PacketWrapper<?>> packets, boolean visible) {
+    private record Candidate(
+            UUID id,
+            List<PacketWrapper<?>> packets,
+            boolean visible,
+            ClientVersion version
+    ) {
     }
 }

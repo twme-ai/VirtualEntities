@@ -123,6 +123,27 @@ public final class VirtualEntity {
         return type;
     }
 
+    /**
+     * Returns whether this entity type can be represented by the supplied client protocol.
+     *
+     * @param version the viewer's client protocol version
+     * @return whether PacketEvents maps this entity type for the version
+     */
+    public boolean supports(ClientVersion version) {
+        Objects.requireNonNull(version, "version");
+        return type.isRegistered() && type.getId(version) >= 0;
+    }
+
+    /**
+     * Returns whether this entity type can be represented by the viewer's client protocol.
+     *
+     * @param viewer the prospective viewer
+     * @return whether PacketEvents maps this entity type for the viewer
+     */
+    public boolean supports(VirtualViewer viewer) {
+        return supports(Objects.requireNonNull(viewer, "viewer").clientVersion());
+    }
+
     public synchronized Location location() {
         return location == null ? null : copy(location);
     }
@@ -411,9 +432,20 @@ public final class VirtualEntity {
         return addViewer(VirtualViewer.of(user));
     }
 
+    /**
+     * Adds a viewer when its client protocol supports this entity type.
+     * Unsupported viewers are left untracked and receive no packets; use {@link #supports(VirtualViewer)}
+     * when the caller needs to select a fallback representation.
+     *
+     * @param viewer the prospective viewer
+     * @return this entity
+     */
     public synchronized VirtualEntity addViewer(VirtualViewer viewer) {
         ensureActive();
         Objects.requireNonNull(viewer, "viewer");
+        if (!supports(viewer)) {
+            return this;
+        }
         if (viewers.putIfAbsent(viewer.id(), viewer) == null && spawned) {
             sendSpawn(viewer);
         }
@@ -462,6 +494,20 @@ public final class VirtualEntity {
         ensureSpawned();
         this.location = copy(Objects.requireNonNull(location, "location"));
         broadcast(this::teleportPacket);
+        return this;
+    }
+
+    /**
+     * Replaces the retained spawn location without sending a movement packet to current viewers.
+     * The entity must be spawned. This leaves {@code onGround} unchanged and is intended for entities
+     * whose visible movement is synchronized by an external vehicle or packet source.
+     *
+     * @param location the location to retain as a defensive copy
+     * @return this entity
+     */
+    public synchronized VirtualEntity setLocationSnapshot(Location location) {
+        ensureSpawned();
+        this.location = copy(Objects.requireNonNull(location, "location"));
         return this;
     }
 

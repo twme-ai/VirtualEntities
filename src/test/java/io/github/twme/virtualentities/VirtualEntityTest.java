@@ -4,6 +4,7 @@ import com.github.retrooper.packetevents.manager.server.ServerManager;
 import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.attribute.Attribute;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.StaticEntityType;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
@@ -17,6 +18,7 @@ import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
@@ -32,6 +34,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAttack;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import com.github.retrooper.packetevents.util.Vector3d;
+import io.github.twme.virtualentities.metadata.GeneratedEntityMetadataKeys;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -52,7 +55,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class VirtualEntityTest {
@@ -69,7 +75,7 @@ class VirtualEntityTest {
     }
 
     private static EntityType testType() {
-        return new StaticEntityType(null, null);
+        return namedType("test");
     }
 
     @Test
@@ -358,6 +364,107 @@ class VirtualEntityTest {
 
         assertThrows(IllegalArgumentException.class, () -> entity.move(8, 0, 0, true));
         assertThrows(IllegalArgumentException.class, () -> entity.move(Double.NaN, 0, 0, true));
+    }
+
+    @Test
+    void updatesOnlyTheRetainedLocationSnapshotForLateViewers() {
+        VirtualEntity unspawned = VirtualEntities.create(new AtomicEntityIdProvider(1_149))
+                .entity(testType())
+                .build();
+        assertThrows(
+                IllegalStateException.class,
+                () -> unspawned.setLocationSnapshot(new Location(1, 2, 3, 0, 0))
+        );
+        unspawned.remove();
+
+        List<PacketWrapper<?>> currentPackets = new ArrayList<>();
+        VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1_150))
+                .entity(testType())
+                .build()
+                .addViewer(VirtualViewer.of(UUID.randomUUID(), currentPackets::add))
+                .spawn(new Location(0, 64, 0, 0, 0));
+        currentPackets.clear();
+        Location replacement = new Location(8, 70, -3, 45, 10);
+
+        entity.setLocationSnapshot(replacement);
+
+        assertTrue(currentPackets.isEmpty());
+        assertEquals(8, entity.location().getX());
+        replacement.setPosition(new Vector3d(100, 100, 100));
+        replacement.setYaw(0);
+        assertEquals(new Vector3d(8, 70, -3), entity.location().getPosition());
+        assertEquals(45, entity.location().getYaw());
+
+        List<PacketWrapper<?>> latePackets = new ArrayList<>();
+        entity.addViewer(VirtualViewer.of(UUID.randomUUID(), latePackets::add));
+        WrapperPlayServerSpawnEntity spawn = assertInstanceOf(WrapperPlayServerSpawnEntity.class, latePackets.get(0));
+        assertEquals(new Vector3d(8, 70, -3), spawn.getPosition());
+        assertEquals(45, spawn.getYaw());
+
+        entity.remove();
+        assertThrows(
+                IllegalStateException.class,
+                () -> entity.setLocationSnapshot(new Location(1, 2, 3, 0, 0))
+        );
+    }
+
+    @Test
+    void filtersViewersByEntityTypeProtocolSupport() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1_175));
+        ItemStack helmet = mock(ItemStack.class);
+        Attribute attribute = mock(Attribute.class);
+        VirtualEntity passenger = manager.entity(EntityTypes.PIG).build();
+        VirtualEntity textDisplay = manager.entity(EntityTypes.TEXT_DISPLAY)
+                .metadata()
+                .build()
+                .setEquipment(EquipmentSlot.HELMET, helmet)
+                .setAttribute(attribute, 1)
+                .addPassenger(passenger);
+        textDisplay.metadata().set(GeneratedEntityMetadataKeys.TextDisplay.LINE_WIDTH, 120);
+        UUID legacyId = UUID.randomUUID();
+        List<PacketWrapper<?>> legacyPackets = new ArrayList<>();
+        UUID modernId = UUID.randomUUID();
+        List<PacketWrapper<?>> modernPackets = new ArrayList<>();
+        VirtualViewer legacy = VirtualViewer.of(legacyId, ClientVersion.V_1_19_3, legacyPackets::add);
+        VirtualViewer modern = VirtualViewer.of(modernId, ClientVersion.V_1_19_4, modernPackets::add);
+        User legacyUser = mock(User.class);
+        UUID legacyUserId = UUID.randomUUID();
+        when(legacyUser.getUUID()).thenReturn(legacyUserId);
+        when(legacyUser.getClientVersion()).thenReturn(ClientVersion.V_1_19_3);
+        VirtualEntity happyGhast = manager.entity(EntityTypes.HAPPY_GHAST).build();
+        VirtualEntity unregistered = manager.entity(new StaticEntityType(null, null)).build();
+
+        assertFalse(textDisplay.supports(ClientVersion.V_1_19_3));
+        assertTrue(textDisplay.supports(ClientVersion.V_1_19_4));
+        assertFalse(textDisplay.supports(legacy));
+        assertTrue(textDisplay.supports(modern));
+        assertFalse(happyGhast.supports(ClientVersion.V_1_21_5));
+        assertTrue(happyGhast.supports(ClientVersion.V_1_21_6));
+        assertFalse(unregistered.supports(ClientVersion.V_1_21_11));
+
+        textDisplay.addViewer(legacy).addViewer(legacyUser).addViewer(modern)
+                .spawn(new Location(0, 64, 0, 0, 0));
+
+        assertFalse(textDisplay.hasViewer(legacyId));
+        assertFalse(textDisplay.hasViewer(legacyUserId));
+        assertTrue(textDisplay.hasViewer(modernId));
+        assertTrue(legacyPackets.isEmpty());
+        verify(legacyUser, never()).sendPacket(any(PacketWrapper.class));
+        assertEquals(5, modernPackets.size());
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, modernPackets.get(0));
+        assertInstanceOf(WrapperPlayServerEntityMetadata.class, modernPackets.get(1));
+        assertInstanceOf(WrapperPlayServerEntityEquipment.class, modernPackets.get(2));
+        assertInstanceOf(WrapperPlayServerUpdateAttributes.class, modernPackets.get(3));
+        assertInstanceOf(WrapperPlayServerSetPassengers.class, modernPackets.get(4));
+        textDisplay.syncMetadata();
+        textDisplay.teleport(new Location(1, 64, 0, 0, 0));
+        textDisplay.clearEquipment(EquipmentSlot.HELMET);
+        textDisplay.resetAttribute(attribute);
+        textDisplay.clearPassengers();
+        textDisplay.despawn();
+        assertTrue(legacyPackets.isEmpty());
+        verify(legacyUser, never()).sendPacket(any(PacketWrapper.class));
+        assertInstanceOf(WrapperPlayServerDestroyEntities.class, modernPackets.get(modernPackets.size() - 1));
     }
 
     @Test

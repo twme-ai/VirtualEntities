@@ -4,7 +4,7 @@
 [![JitPack](https://jitpack.io/v/twme-ai/VirtualEntities.svg)](https://jitpack.io/#twme-ai/VirtualEntities)
 [![License](https://img.shields.io/github/license/twme-ai/VirtualEntities)](LICENSE)
 
-VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, viewer lifecycle management, relative and absolute movement, readable generated metadata, atomic multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
+VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, protocol-aware viewer lifecycle management, relative, absolute, and externally synchronized movement state, readable generated metadata, atomic metadata flags and multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
 
 Metadata indexes are resolved from data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/). The dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
 
@@ -77,7 +77,7 @@ pig.removeViewer(packetEventsUser);
 pig.remove();
 ```
 
-Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. Use `MetadataKey.of` for custom fields. Glowing is one bit within `SHARED_FLAGS`, not an independent protocol field, so callers should use a small bitmask helper when changing that flag.
+Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. Use `MetadataKey.of` for custom fields.
 
 `VirtualMetadata#get` and `contains` inspect only values explicitly assigned with `set`. They resolve keys by field name, remain type-safe for fixed and generated versioned keys, and never parse the textual defaults from entity-data. Removing a key makes it absent again:
 
@@ -87,11 +87,31 @@ boolean explicitlySet = pig.metadata().contains(GeneratedEntityMetadataKeys.Pig.
 pig.metadata().remove(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
 ```
 
+Byte-backed metadata flags can be changed atomically without overwriting neighboring bits. An unassigned field is read as zero; explicitly disabling a flag stores zero. A zero mask or non-byte key is rejected:
+
+```java
+pig.metadata().setFlag(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x40, true);
+boolean glowing = pig.metadata().isFlagSet(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x40);
+
+textDisplay.metadata().setFlag(
+        GeneratedEntityMetadataKeys.TextDisplay.STYLE_FLAGS,
+        (byte) 0x02,
+        true
+);
+```
+
 The default `metadata()` builder resolves both the current PacketEvents server version and the entity-data name. When kennytv has no exact release document, VirtualEntities selects the newest bundled numeric snapshot at or before that release. PacketEvents entity aliases and parent types are resolved automatically. The explicit `metadata(version, entityDataName)` overload remains available for custom mappings.
 
 Field names are resolved through the selected entity's complete inheritance chain. An unsupported version, entity name, or field fails immediately instead of sending a packet with a guessed index.
 
 Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
+
+Use `setLocationSnapshot` for an already spawned entity whose visible movement is driven by an external vehicle or packet source. It defensively replaces only the retained spawn location, sends no movement packet, and leaves `onGround` unchanged. Current viewers may temporarily differ from that snapshot; viewers added afterward spawn at the new position:
+
+```java
+nameTag.setLocationSnapshot(vehiclePosition);
+nameTag.addViewer(packetEventsUser);
+```
 
 ### Atomic multi-entity updates
 
@@ -150,6 +170,17 @@ VirtualAudienceTracker<PlayerContext> tracker = VirtualAudienceTracker.of(
 tracker.reconcile(currentPlayers);
 ```
 
+Viewer membership is also guarded by the PacketEvents entity-type mapping for each client protocol. `addViewer` silently skips unsupported viewers and retains no membership; query `supports` when selecting a downstream fallback. The audience tracker returns `false` and does not claim ownership for unsupported candidates:
+
+```java
+VirtualViewer viewer = VirtualViewer.of(packetEventsUser);
+if (textDisplay.supports(viewer)) {
+    textDisplay.addViewer(viewer);
+} else {
+    // Select a platform-specific fallback representation.
+}
+```
+
 Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. The manager accepts only spawned entities visible to that actor, then notifies listeners registered with `onInteraction`:
 
 ```java
@@ -201,6 +232,7 @@ The core API is based entirely on PacketEvents and does not register global list
 - [EntityLib](https://github.com/Tofaa2/EntityLib) by Tofaa2 informed the wrapper entity lifecycle and metadata API direction.
 - [PacketEntities](https://github.com/3add/PacketEntities) by 3add informed the builder, viewer-management, and data-generation design.
 - [TextDisplayShapes](https://github.com/TWME-TW/TextDisplayShapes) provided the renderer use case for readable metadata and atomic multi-entity updates.
+- [DisplayNameTags](https://github.com/Matt-MX/DisplayNameTags) provided the use cases for metadata flags, external movement snapshots, and old-client entity fallbacks.
 - [kennytv entity-data](https://kennytv.eu/entity-data/) and its [source repository](https://github.com/kennytv/kennytv.eu) provide the decompiled Minecraft metadata layouts bundled by VirtualEntities.
 - [Mineflayer](https://github.com/PrismarineJS/mineflayer) is the recommended black-box client for integration testing entity behavior.
 

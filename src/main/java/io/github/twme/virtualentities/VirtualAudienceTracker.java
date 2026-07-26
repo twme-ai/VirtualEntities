@@ -13,6 +13,7 @@ import java.util.function.Predicate;
 /**
  * Reconciles platform-specific audience candidates with one entity's viewers.
  * The tracker owns viewer membership for UUIDs that it adds.
+ * Candidates whose client protocol does not support the entity are excluded like invisible candidates.
  *
  * @param <C> a platform player, connection, or tracking context
  */
@@ -46,26 +47,7 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
         ensureOpen();
         Objects.requireNonNull(candidate, "candidate");
         VirtualViewer viewer = Objects.requireNonNull(viewerFactory.apply(candidate), "viewerFactory result");
-        Tracked<C> previous = tracked.get(viewer.id());
-        if (!visibilityRule.test(candidate)) {
-            if (previous != null) {
-                tracked.remove(viewer.id());
-                removeOwnedViewer(viewer.id(), previous);
-            }
-            return false;
-        }
-
-        if (previous == null || !Objects.equals(previous.candidate(), candidate)) {
-            if (previous != null) {
-                removeOwnedViewer(viewer.id(), previous);
-            }
-            boolean owned = !entity.hasViewer(viewer.id());
-            tracked.put(viewer.id(), new Tracked<>(candidate, owned));
-            if (owned) {
-                entity.addViewer(viewer);
-            }
-        }
-        return true;
+        return updateResolved(candidate, viewer);
     }
 
     /** Reconciles the complete current candidate set, including disconnected candidates. */
@@ -109,14 +91,14 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
         closed = true;
     }
 
-    private void updateResolved(C candidate, VirtualViewer viewer) {
+    private boolean updateResolved(C candidate, VirtualViewer viewer) {
         Tracked<C> previous = tracked.get(viewer.id());
-        if (!visibilityRule.test(candidate)) {
+        if (!visibilityRule.test(candidate) || !entity.supports(viewer)) {
             if (previous != null) {
                 tracked.remove(viewer.id());
                 removeOwnedViewer(viewer.id(), previous);
             }
-            return;
+            return false;
         }
         if (previous == null || !Objects.equals(previous.candidate(), candidate)) {
             if (previous != null) {
@@ -128,6 +110,7 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
                 entity.addViewer(viewer);
             }
         }
+        return true;
     }
 
     private void removeOwnedViewer(UUID viewerId, Tracked<C> trackedViewer) {

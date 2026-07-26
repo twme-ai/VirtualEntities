@@ -2,6 +2,7 @@ package io.github.twme.virtualentities.metadata;
 
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,6 +58,40 @@ public final class VirtualMetadata {
         return values.containsKey(Objects.requireNonNull(key, "key").fieldName());
     }
 
+    /**
+     * Atomically enables or disables every bit in {@code mask} while preserving all other bits.
+     * An unassigned field starts at zero; disabling it therefore stores an explicit zero value.
+     *
+     * @param key a byte-backed metadata key
+     * @param mask the non-zero bits to update
+     * @param enabled whether the masked bits should be enabled
+     * @return this metadata container
+     */
+    public synchronized VirtualMetadata setFlag(MetadataKey<Byte> key, byte mask, boolean enabled) {
+        ResolvedByteKey resolved = resolveByteKey(key, mask);
+        int current = Byte.toUnsignedInt(explicitByteValue(resolved));
+        int maskBits = Byte.toUnsignedInt(mask);
+        byte updated = (byte) (enabled ? current | maskBits : current & ~maskBits);
+        values.put(
+                key.fieldName(),
+                new Value<>(resolved.field().index(), resolved.type(), updated)
+        );
+        return this;
+    }
+
+    /**
+     * Returns whether every bit in {@code mask} is enabled, treating an unassigned field as zero.
+     *
+     * @param key a byte-backed metadata key
+     * @param mask the non-zero bits to inspect
+     * @return whether all masked bits are enabled
+     */
+    public synchronized boolean isFlagSet(MetadataKey<Byte> key, byte mask) {
+        ResolvedByteKey resolved = resolveByteKey(key, mask);
+        int maskBits = Byte.toUnsignedInt(mask);
+        return (Byte.toUnsignedInt(explicitByteValue(resolved)) & maskBits) == maskBits;
+    }
+
     public synchronized VirtualMetadata remove(MetadataKey<?> key) {
         values.remove(Objects.requireNonNull(key, "key").fieldName());
         return this;
@@ -69,6 +104,37 @@ public final class VirtualMetadata {
         }
         result.sort(java.util.Comparator.comparingInt(EntityData::getIndex));
         return Collections.unmodifiableList(result);
+    }
+
+    private ResolvedByteKey resolveByteKey(MetadataKey<Byte> key, byte mask) {
+        Objects.requireNonNull(key, "key");
+        if (mask == 0) {
+            throw new IllegalArgumentException("Metadata flag mask cannot be zero");
+        }
+        MetadataField field = schema.require(key.fieldName());
+        EntityDataType<Byte> type = key.type(field.dataType());
+        if (!EntityDataTypes.BYTE.equals(type)) {
+            throw new IllegalArgumentException(
+                    "Metadata field '" + key.fieldName() + "' is not byte-compatible"
+            );
+        }
+        return new ResolvedByteKey(field, type);
+    }
+
+    private byte explicitByteValue(ResolvedByteKey resolved) {
+        Value<?> value = values.get(resolved.field().fieldName());
+        if (value == null) {
+            return 0;
+        }
+        if (!resolved.type().equals(value.type()) || !(value.value() instanceof Byte byteValue)) {
+            throw new IllegalArgumentException(
+                    "Metadata field '" + resolved.field().fieldName() + "' does not contain a byte value"
+            );
+        }
+        return byteValue;
+    }
+
+    private record ResolvedByteKey(MetadataField field, EntityDataType<Byte> type) {
     }
 
     private record Value<T>(int index, EntityDataType<T> type, T value) {

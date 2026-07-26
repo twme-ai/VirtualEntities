@@ -110,17 +110,17 @@ class VirtualEntityManagerBundleTest {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_200));
         List<PacketWrapper<?>> modernPackets = new ArrayList<>();
         List<PacketWrapper<?>> legacyPackets = new ArrayList<>();
-        VirtualEntity entity = textDisplay(
-                manager,
-                viewer(UUID.randomUUID(), ClientVersion.V_1_21_11, modernPackets),
-                viewer(UUID.randomUUID(), ClientVersion.V_1_19_3, legacyPackets),
-                new Location(0, 64, 0, 0, 0)
-        );
+        VirtualEntity entity = manager.entity(EntityTypes.PIG)
+                .metadata()
+                .build()
+                .addViewer(viewer(UUID.randomUUID(), ClientVersion.V_1_21_11, modernPackets))
+                .addViewer(viewer(UUID.randomUUID(), ClientVersion.V_1_19_3, legacyPackets))
+                .spawn(new Location(0, 64, 0, 0, 0));
         modernPackets.clear();
         legacyPackets.clear();
 
         manager.bundle(() -> {
-            entity.metadata().set(GeneratedEntityMetadataKeys.TextDisplay.LINE_WIDTH, 120);
+            entity.metadata().set(GeneratedEntityMetadataKeys.Pig.BOOST_TIME, 120);
             entity.syncMetadata();
             manager.bundle(() -> entity.teleport(new Location(3, 64, 0, 0, 0)));
         });
