@@ -1,0 +1,25 @@
+name: Mineflayer E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integration/mineflayer/package-lock.json
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew mineflayerE2e

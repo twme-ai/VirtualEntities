@@ -7,34 +7,44 @@ import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
+import com.github.retrooper.packetevents.protocol.player.GameMode;
 import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityHeadLook;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityVelocity;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetPassengers;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateAttributes;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfo;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoRemove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoUpdate;
 import io.github.twme.virtualentities.metadata.EntityMetadataSchema;
 import io.github.twme.virtualentities.metadata.VirtualMetadata;
+import net.kyori.adventure.text.Component;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
-import java.util.LinkedHashSet;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /** A client-side entity whose lifecycle is represented entirely by PacketEvents packets. */
 public final class VirtualEntity {
@@ -47,14 +57,20 @@ public final class VirtualEntity {
     private final Map<UUID, VirtualViewer> viewers = new LinkedHashMap<>();
     private final Map<EquipmentSlot, ItemStack> equipment = new EnumMap<>(EquipmentSlot.class);
     private final Map<Attribute, WrapperPlayServerUpdateAttributes.Property> attributes = new LinkedHashMap<>();
-    private final Set<VirtualEntity> passengers = new LinkedHashSet<>();
-    private VirtualEntity vehicle;
+    private final CopyOnWriteArrayList<VirtualEntity> passengers = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Consumer<VirtualEntityInteraction>> interactionListeners = new CopyOnWriteArrayList<>();
+    private UserProfile playerProfile;
+    private GameMode gameMode = GameMode.SURVIVAL;
+    private Component tabListName;
+    private boolean listed = true;
+    private int latency;
+    private volatile VirtualEntity vehicle;
     private Location location;
     private Vector3d velocity;
     private float headYaw;
     private boolean onGround;
     private boolean spawned;
-    private boolean removed;
+    private volatile boolean removed;
 
     private VirtualEntity(Builder builder) {
         this.manager = builder.manager;
@@ -64,6 +80,12 @@ public final class VirtualEntity {
         this.objectData = builder.objectData;
         this.velocity = builder.velocity;
         this.headYaw = builder.headYaw;
+        if (builder.playerProfile != null) {
+            this.playerProfile = copyProfile(builder.playerProfile);
+            if (!uuid.equals(playerProfile.getUUID())) {
+                throw new IllegalArgumentException("Player profile UUID must match the entity UUID");
+            }
+        }
         if (!builder.metadataEnabled) {
             this.metadata = null;
         } else {
@@ -122,6 +144,110 @@ public final class VirtualEntity {
 
     public synchronized Collection<VirtualViewer> viewers() {
         return Collections.unmodifiableList(java.util.List.copyOf(viewers.values()));
+    }
+
+    public synchronized boolean hasViewer(UUID viewerId) {
+        return viewers.containsKey(Objects.requireNonNull(viewerId, "viewerId"));
+    }
+
+    /** Registers an inbound interaction listener for this entity. */
+    public VirtualEntityInteraction.Subscription onInteraction(Consumer<VirtualEntityInteraction> listener) {
+        ensureActive();
+        Consumer<VirtualEntityInteraction> checked = Objects.requireNonNull(listener, "listener");
+        interactionListeners.add(checked);
+        return () -> interactionListeners.remove(checked);
+    }
+
+    /** Returns a defensive copy of this entity's player profile, when configured as a player. */
+    public synchronized Optional<UserProfile> playerProfile() {
+        return playerProfile == null ? Optional.empty() : Optional.of(copyProfile(playerProfile));
+    }
+
+    /** Replaces the player name and textures, re-spawning the entity for current viewers when needed. */
+    public synchronized VirtualEntity setPlayerProfile(UserProfile profile) {
+        ensureActive();
+        ensurePlayer();
+        UserProfile replacement = validatedProfile(profile);
+        if (!uuid.equals(replacement.getUUID())) {
+            throw new IllegalArgumentException("Player profile UUID cannot change after entity creation");
+        }
+        playerProfile = copyProfile(replacement);
+        if (spawned) {
+            for (VirtualViewer viewer : viewers.values()) {
+                viewer.send(new WrapperPlayServerDestroyEntities(entityId));
+                viewer.send(playerInfoRemovePacket());
+                sendSpawn(viewer);
+            }
+        }
+        return this;
+    }
+
+    public synchronized GameMode gameMode() {
+        ensurePlayer();
+        return gameMode;
+    }
+
+    public synchronized VirtualEntity setGameMode(GameMode gameMode) {
+        ensureActive();
+        ensurePlayer();
+        this.gameMode = Objects.requireNonNull(gameMode, "gameMode");
+        syncPlayerInfo(
+                WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_GAME_MODE,
+                WrapperPlayServerPlayerInfo.Action.UPDATE_GAME_MODE
+        );
+        return this;
+    }
+
+    public synchronized Optional<Component> tabListName() {
+        ensurePlayer();
+        return Optional.ofNullable(tabListName);
+    }
+
+    public synchronized VirtualEntity setTabListName(Component tabListName) {
+        ensureActive();
+        ensurePlayer();
+        this.tabListName = tabListName;
+        syncPlayerInfo(
+                WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_DISPLAY_NAME,
+                WrapperPlayServerPlayerInfo.Action.UPDATE_DISPLAY_NAME
+        );
+        return this;
+    }
+
+    public synchronized boolean isListed() {
+        ensurePlayer();
+        return listed;
+    }
+
+    public synchronized VirtualEntity setListed(boolean listed) {
+        ensureActive();
+        ensurePlayer();
+        this.listed = listed;
+        if (spawned) {
+            PacketWrapper<?> packet = modernPlayerInfo()
+                    ? playerInfoUpdatePacket(EnumSet.of(WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LISTED))
+                    : listed
+                            ? legacyPlayerInfoPacket(WrapperPlayServerPlayerInfo.Action.ADD_PLAYER)
+                            : playerInfoRemovePacket();
+            broadcast(packet);
+        }
+        return this;
+    }
+
+    public synchronized int latency() {
+        ensurePlayer();
+        return latency;
+    }
+
+    public synchronized VirtualEntity setLatency(int latency) {
+        ensureActive();
+        ensurePlayer();
+        this.latency = latency;
+        syncPlayerInfo(
+                WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LATENCY,
+                WrapperPlayServerPlayerInfo.Action.UPDATE_LATENCY
+        );
+        return this;
     }
 
     /** Returns the current equipment snapshot. */
@@ -196,17 +322,17 @@ public final class VirtualEntity {
     }
 
     /** Returns this entity's current passengers in protocol order. */
-    public synchronized List<VirtualEntity> passengers() {
+    public List<VirtualEntity> passengers() {
         return List.copyOf(passengers);
     }
 
     /** Returns the vehicle this entity is riding, if any. */
-    public synchronized Optional<VirtualEntity> vehicle() {
+    public Optional<VirtualEntity> vehicle() {
         return Optional.ofNullable(vehicle);
     }
 
     /** Adds a managed virtual entity as a passenger. */
-    public synchronized VirtualEntity addPassenger(VirtualEntity passenger) {
+    public VirtualEntity addPassenger(VirtualEntity passenger) {
         ensureActive();
         Objects.requireNonNull(passenger, "passenger").ensureActive();
         if (passenger == this) {
@@ -215,42 +341,63 @@ public final class VirtualEntity {
         if (passenger.manager != manager) {
             throw new IllegalArgumentException("Passenger must belong to the same VirtualEntityManager");
         }
-        for (VirtualEntity ancestor = this; ancestor != null; ancestor = ancestor.vehicle) {
-            if (ancestor == passenger) {
-                throw new IllegalArgumentException("Passenger relationship would create a cycle");
+        VirtualEntity oldVehicle;
+        synchronized (manager.relationshipLock()) {
+            ensureActive();
+            passenger.ensureActive();
+            for (VirtualEntity ancestor = this; ancestor != null; ancestor = ancestor.vehicle) {
+                if (ancestor == passenger) {
+                    throw new IllegalArgumentException("Passenger relationship would create a cycle");
+                }
             }
+            if (passenger.vehicle == this) {
+                return this;
+            }
+            oldVehicle = passenger.vehicle;
+            if (oldVehicle != null) {
+                oldVehicle.passengers.remove(passenger);
+            }
+            passengers.addIfAbsent(passenger);
+            passenger.vehicle = this;
         }
-        if (passenger.vehicle == this) {
-            return this;
+        if (oldVehicle != null) {
+            oldVehicle.syncPassengersIfSpawned();
         }
-        if (passenger.vehicle != null) {
-            passenger.vehicle.removePassenger(passenger);
-        }
-        passengers.add(passenger);
-        passenger.vehicle = this;
         syncPassengersIfSpawned();
         return this;
     }
 
     /** Removes a passenger while preserving all other passengers. */
-    public synchronized VirtualEntity removePassenger(VirtualEntity passenger) {
+    public VirtualEntity removePassenger(VirtualEntity passenger) {
         ensureActive();
         Objects.requireNonNull(passenger, "passenger");
-        if (passengers.remove(passenger)) {
-            passenger.vehicle = null;
+        boolean changed;
+        synchronized (manager.relationshipLock()) {
+            changed = passengers.remove(passenger);
+            if (changed && passenger.vehicle == this) {
+                passenger.vehicle = null;
+            }
+        }
+        if (changed) {
             syncPassengersIfSpawned();
         }
         return this;
     }
 
     /** Removes every passenger from this entity. */
-    public synchronized VirtualEntity clearPassengers() {
+    public VirtualEntity clearPassengers() {
         ensureActive();
-        if (!passengers.isEmpty()) {
+        boolean changed;
+        synchronized (manager.relationshipLock()) {
+            changed = !passengers.isEmpty();
             for (VirtualEntity passenger : passengers) {
-                passenger.vehicle = null;
+                if (passenger.vehicle == this) {
+                    passenger.vehicle = null;
+                }
             }
             passengers.clear();
+        }
+        if (changed) {
             syncPassengersIfSpawned();
         }
         return this;
@@ -278,6 +425,9 @@ public final class VirtualEntity {
         VirtualViewer viewer = viewers.remove(Objects.requireNonNull(viewerId, "viewerId"));
         if (viewer != null && spawned) {
             viewer.send(new WrapperPlayServerDestroyEntities(entityId));
+            if (playerProfile != null) {
+                viewer.send(playerInfoRemovePacket());
+            }
         }
         return this;
     }
@@ -296,6 +446,9 @@ public final class VirtualEntity {
     public synchronized VirtualEntity despawn() {
         if (spawned) {
             broadcast(new WrapperPlayServerDestroyEntities(entityId));
+            if (playerProfile != null) {
+                broadcast(playerInfoRemovePacket());
+            }
             spawned = false;
         }
         return this;
@@ -305,6 +458,80 @@ public final class VirtualEntity {
         ensureSpawned();
         this.location = copy(Objects.requireNonNull(location, "location"));
         broadcast(new WrapperPlayServerEntityTeleport(entityId, this.location, onGround));
+        return this;
+    }
+
+    /** Applies a protocol relative move; each delta must be within the encodable range. */
+    public synchronized VirtualEntity move(double deltaX, double deltaY, double deltaZ, boolean onGround) {
+        ensureSpawned();
+        validateRelativeDelta(deltaX, deltaY, deltaZ);
+        this.location = new Location(
+                location.getX() + deltaX,
+                location.getY() + deltaY,
+                location.getZ() + deltaZ,
+                location.getYaw(),
+                location.getPitch()
+        );
+        this.onGround = onGround;
+        broadcast(new WrapperPlayServerEntityRelativeMove(entityId, deltaX, deltaY, deltaZ, onGround));
+        return this;
+    }
+
+    /** Applies a combined protocol relative move and body rotation. */
+    public synchronized VirtualEntity moveAndRotate(
+            double deltaX,
+            double deltaY,
+            double deltaZ,
+            float yaw,
+            float pitch,
+            boolean onGround
+    ) {
+        ensureSpawned();
+        validateRelativeDelta(deltaX, deltaY, deltaZ);
+        this.location = new Location(
+                location.getX() + deltaX,
+                location.getY() + deltaY,
+                location.getZ() + deltaZ,
+                yaw,
+                pitch
+        );
+        this.onGround = onGround;
+        broadcast(new WrapperPlayServerEntityRelativeMoveAndRotation(
+                entityId,
+                deltaX,
+                deltaY,
+                deltaZ,
+                yaw,
+                pitch,
+                onGround
+        ));
+        return this;
+    }
+
+    /** Uses the smallest correct movement packet for a new absolute location. */
+    public synchronized VirtualEntity updateLocation(Location target, boolean onGround) {
+        ensureSpawned();
+        Objects.requireNonNull(target, "target");
+        double deltaX = target.getX() - location.getX();
+        double deltaY = target.getY() - location.getY();
+        double deltaZ = target.getZ() - location.getZ();
+        boolean moved = deltaX != 0 || deltaY != 0 || deltaZ != 0;
+        boolean rotated = target.getYaw() != location.getYaw() || target.getPitch() != location.getPitch();
+
+        if (moved && !relativeDeltaFits(deltaX, deltaY, deltaZ)) {
+            this.onGround = onGround;
+            return teleport(target);
+        }
+        if (moved && rotated) {
+            return moveAndRotate(deltaX, deltaY, deltaZ, target.getYaw(), target.getPitch(), onGround);
+        }
+        if (moved) {
+            return move(deltaX, deltaY, deltaZ, onGround);
+        }
+        if (rotated) {
+            return rotate(target.getYaw(), target.getPitch(), onGround);
+        }
+        this.onGround = onGround;
         return this;
     }
 
@@ -346,14 +573,35 @@ public final class VirtualEntity {
         despawn();
         detachPassengerRelationships();
         viewers.clear();
+        interactionListeners.clear();
         removed = true;
         manager.unregister(this);
     }
 
     private void sendSpawn(VirtualViewer viewer) {
-        viewer.send(new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity));
-        if (metadata != null && !metadata.entityData().isEmpty()) {
+        if (playerProfile != null) {
+            viewer.send(playerInfoAddPacket());
+        }
+        boolean metadataIncludedInSpawn = playerProfile != null && legacyPlayerSpawn();
+        if (metadataIncludedInSpawn) {
+            viewer.send(new WrapperPlayServerSpawnPlayer(
+                    entityId,
+                    uuid,
+                    location,
+                    metadata == null ? List.of() : metadata.entityData()
+            ));
+        } else {
+            viewer.send(new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity));
+        }
+        if (!metadataIncludedInSpawn && metadata != null && !metadata.entityData().isEmpty()) {
             viewer.send(new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
+        }
+        if (playerProfile != null) {
+            viewer.send(new WrapperPlayServerEntityRotation(entityId, location.getYaw(), location.getPitch(), onGround));
+            viewer.send(new WrapperPlayServerEntityHeadLook(entityId, headYaw));
+            if (!listed && !modernPlayerInfo()) {
+                viewer.send(playerInfoRemovePacket());
+            }
         }
         for (Map.Entry<EquipmentSlot, ItemStack> entry : equipment.entrySet()) {
             viewer.send(equipmentPacket(entry.getKey(), entry.getValue()));
@@ -370,6 +618,74 @@ public final class VirtualEntity {
         return new WrapperPlayServerEntityEquipment(entityId, List.of(new Equipment(slot, item)));
     }
 
+    private void syncPlayerInfo(
+            WrapperPlayServerPlayerInfoUpdate.Action modernAction,
+            WrapperPlayServerPlayerInfo.Action legacyAction
+    ) {
+        if (spawned) {
+            broadcast(modernPlayerInfo()
+                    ? playerInfoUpdatePacket(EnumSet.of(modernAction))
+                    : legacyPlayerInfoPacket(legacyAction));
+        }
+    }
+
+    private PacketWrapper<?> playerInfoAddPacket() {
+        if (modernPlayerInfo()) {
+            return playerInfoUpdatePacket(EnumSet.of(
+                    WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER,
+                    WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_GAME_MODE,
+                    WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LISTED,
+                    WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LATENCY,
+                    WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_DISPLAY_NAME
+            ));
+        }
+        return legacyPlayerInfoPacket(WrapperPlayServerPlayerInfo.Action.ADD_PLAYER);
+    }
+
+    private WrapperPlayServerPlayerInfoUpdate playerInfoUpdatePacket(
+            EnumSet<WrapperPlayServerPlayerInfoUpdate.Action> actions
+    ) {
+        return new WrapperPlayServerPlayerInfoUpdate(
+                actions,
+                new WrapperPlayServerPlayerInfoUpdate.PlayerInfo(
+                        copyProfile(playerProfile),
+                        listed,
+                        latency,
+                        gameMode,
+                        tabListName,
+                        null
+                )
+        );
+    }
+
+    private WrapperPlayServerPlayerInfo legacyPlayerInfoPacket(WrapperPlayServerPlayerInfo.Action action) {
+        return new WrapperPlayServerPlayerInfo(
+                action,
+                new WrapperPlayServerPlayerInfo.PlayerData(
+                        tabListName,
+                        copyProfile(playerProfile),
+                        gameMode,
+                        latency
+                )
+        );
+    }
+
+    private PacketWrapper<?> playerInfoRemovePacket() {
+        return modernPlayerInfo()
+                ? new WrapperPlayServerPlayerInfoRemove(uuid)
+                : legacyPlayerInfoPacket(WrapperPlayServerPlayerInfo.Action.REMOVE_PLAYER);
+    }
+
+    private boolean modernPlayerInfo() {
+        return PacketEvents.getAPI().getServerManager().getVersion()
+                .isNewerThanOrEquals(ServerVersion.V_1_19_3);
+    }
+
+    private boolean legacyPlayerSpawn() {
+        return !PacketEvents.getAPI().getServerManager().getVersion()
+                .isNewerThanOrEquals(ServerVersion.V_1_20_2);
+    }
+
     private WrapperPlayServerSetPassengers passengersPacket() {
         return new WrapperPlayServerSetPassengers(
                 entityId,
@@ -384,22 +700,33 @@ public final class VirtualEntity {
     }
 
     private void detachPassengerRelationships() {
-        if (vehicle != null) {
-            VirtualEntity oldVehicle = vehicle;
-            vehicle = null;
-            oldVehicle.passengers.remove(this);
-            oldVehicle.syncPassengersIfSpawned();
-        }
-        if (!passengers.isEmpty()) {
+        VirtualEntity oldVehicle;
+        synchronized (manager.relationshipLock()) {
+            oldVehicle = vehicle;
+            if (oldVehicle != null) {
+                vehicle = null;
+                oldVehicle.passengers.remove(this);
+            }
             for (VirtualEntity passenger : passengers) {
-                passenger.vehicle = null;
+                if (passenger.vehicle == this) {
+                    passenger.vehicle = null;
+                }
             }
             passengers.clear();
+        }
+        if (oldVehicle != null) {
+            oldVehicle.syncPassengersIfSpawned();
         }
     }
 
     private void broadcast(PacketWrapper<?> packet) {
         viewers.values().forEach(viewer -> viewer.send(packet));
+    }
+
+    void dispatchInteraction(VirtualEntityInteraction interaction) {
+        for (Consumer<VirtualEntityInteraction> listener : interactionListeners) {
+            listener.accept(interaction);
+        }
     }
 
     private void ensureActive() {
@@ -415,8 +742,49 @@ public final class VirtualEntity {
         }
     }
 
+    private void ensurePlayer() {
+        if (playerProfile == null) {
+            throw new IllegalStateException("Entity is not configured as a virtual player");
+        }
+    }
+
     private static Location copy(Location location) {
         return new Location(location.getPosition(), location.getYaw(), location.getPitch());
+    }
+
+    private static UserProfile validatedProfile(UserProfile profile) {
+        Objects.requireNonNull(profile, "profile");
+        Objects.requireNonNull(profile.getUUID(), "profile UUID");
+        String name = Objects.requireNonNull(profile.getName(), "profile name");
+        if (name.isEmpty() || name.length() > 16) {
+            throw new IllegalArgumentException("Player profile name must contain 1 to 16 characters");
+        }
+        Objects.requireNonNull(profile.getTextureProperties(), "profile texture properties");
+        return profile;
+    }
+
+    private static UserProfile copyProfile(UserProfile profile) {
+        UserProfile validated = validatedProfile(profile);
+        return new UserProfile(
+                validated.getUUID(),
+                validated.getName(),
+                List.copyOf(validated.getTextureProperties())
+        );
+    }
+
+    private static void validateRelativeDelta(double deltaX, double deltaY, double deltaZ) {
+        if (!relativeDeltaFits(deltaX, deltaY, deltaZ)) {
+            throw new IllegalArgumentException("Relative movement deltas must each be within [-8, 8)");
+        }
+    }
+
+    private static boolean relativeDeltaFits(double deltaX, double deltaY, double deltaZ) {
+        return Double.isFinite(deltaX)
+                && Double.isFinite(deltaY)
+                && Double.isFinite(deltaZ)
+                && deltaX >= -8 && deltaX < 8
+                && deltaY >= -8 && deltaY < 8
+                && deltaZ >= -8 && deltaZ < 8;
     }
 
     /** Builds a virtual entity and registers it with its manager. */
@@ -429,6 +797,7 @@ public final class VirtualEntity {
         private Vector3d velocity = Vector3d.zero();
         private float headYaw;
         private boolean metadataEnabled;
+        private UserProfile playerProfile;
         private String metadataVersion;
         private String entityDataName;
 
@@ -482,6 +851,12 @@ public final class VirtualEntity {
             this.metadataEnabled = true;
             this.metadataVersion = Objects.requireNonNull(version, "version");
             this.entityDataName = Objects.requireNonNull(entityDataName, "entityDataName");
+            return this;
+        }
+
+        Builder playerProfile(UserProfile profile) {
+            this.playerProfile = copyProfile(profile);
+            this.uuid = this.playerProfile.getUUID();
             return this;
         }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly BASE_URL="https://kennytv.eu/entity-data"
-readonly OUTPUT_DIR="src/main/resources/entity-data"
+readonly OUTPUT_DIR="${PROJECT_DIR}/src/main/resources/entity-data"
 readonly TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 
@@ -39,5 +40,7 @@ done < <(jq -r '.[]' "${TEMP_DIR}/versions.json")
 mkdir -p "${OUTPUT_DIR}"
 find "${OUTPUT_DIR}" -maxdepth 1 -type f -name '*.json' -delete
 install -m 0644 "${TEMP_DIR}"/*.json "${OUTPUT_DIR}/"
+
+"${PROJECT_DIR}/gradlew" --quiet --project-dir "${PROJECT_DIR}" generateMetadataKeys
 
 echo "Synced $(jq 'length' "${TEMP_DIR}/versions.json") entity-data versions."

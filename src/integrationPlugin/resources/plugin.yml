@@ -1,0 +1,8 @@
+name: VirtualEntitiesIntegration
+version: ${version}
+main: io.github.twme.virtualentities.integration.VirtualEntitiesIntegrationPlugin
+api-version: "1.21"
+depend: [packetevents]
+commands:
+  vetest:
+    description: Starts the VirtualEntities Mineflayer scenario.

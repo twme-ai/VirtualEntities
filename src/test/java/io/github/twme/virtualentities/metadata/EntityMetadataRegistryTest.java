@@ -1,16 +1,12 @@
 package io.github.twme.virtualentities.metadata;
 
-import com.github.retrooper.packetevents.PacketEvents;
-import com.github.retrooper.packetevents.PacketEventsAPI;
-import com.github.retrooper.packetevents.manager.server.ServerManager;
-import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
-import com.github.retrooper.packetevents.settings.PacketEventsSettings;
-import io.github.retrooper.packetevents.impl.netty.NettyManagerImpl;
+import io.github.twme.virtualentities.PacketEventsTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -22,26 +18,19 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 class EntityMetadataRegistryTest {
     private final EntityMetadataRegistry registry = new EntityMetadataRegistry();
 
     @BeforeAll
     static void initializePacketEvents() {
-        PacketEventsAPI<?> api = mock(PacketEventsAPI.class);
-        ServerManager serverManager = mock(ServerManager.class);
-        when(api.getServerManager()).thenReturn(serverManager);
-        when(api.getNettyManager()).thenReturn(new NettyManagerImpl());
-        when(api.getSettings()).thenReturn(new PacketEventsSettings());
-        when(serverManager.getVersion()).thenReturn(ServerVersion.V_1_21_11);
-        PacketEvents.setAPI(api);
+        PacketEventsTestSupport.initialize();
     }
 
     @AfterAll
     static void clearPacketEvents() {
-        PacketEvents.setAPI(null);
+        PacketEventsTestSupport.clear();
     }
 
     @Test
@@ -99,6 +88,25 @@ class EntityMetadataRegistryTest {
         }
 
         assertEquals(List.of(), unresolved);
+    }
+
+    @Test
+    void generatedKeysUseInheritanceAndVersionedSerializers() {
+        VirtualMetadata pig = new VirtualMetadata(registry.schema("1.21.11", "Pig"));
+        pig.set(GeneratedEntityMetadataKeys.Pig.SHARED_FLAGS, (byte) 0x40)
+                .set(GeneratedEntityMetadataKeys.Pig.BOOST_TIME, 20);
+
+        assertEquals(2, pig.entityData().size());
+        assertEquals(0, pig.entityData().get(0).getIndex());
+        assertEquals(17, pig.entityData().get(1).getIndex());
+        assertSame(
+                EntityDataTypes.TYPED_CAT_VARIANT,
+                GeneratedEntityMetadataKeys.Cat.VARIANT.type("CatVariant")
+        );
+        assertSame(
+                EntityDataTypes.TYPED_CAT_VARIANT,
+                GeneratedEntityMetadataKeys.Cat.VARIANT.type("Holder<CatVariant>")
+        );
     }
 
     private static EntityType entityType(String name, EntityType parent) {

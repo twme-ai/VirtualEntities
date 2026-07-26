@@ -1,6 +1,7 @@
 package io.github.twme.virtualentities.metadata;
 
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,7 +26,7 @@ public final class VirtualMetadata {
     public <T> VirtualMetadata set(MetadataKey<T> key, T value) {
         Objects.requireNonNull(key, "key");
         MetadataField field = schema.require(key.fieldName());
-        values.put(key.fieldName(), new Value<>(field.index(), key, value));
+        values.put(key.fieldName(), new Value<>(field.index(), key.type(field.dataType()), value));
         return this;
     }
 
@@ -43,9 +44,9 @@ public final class VirtualMetadata {
         return Collections.unmodifiableList(result);
     }
 
-    private record Value<T>(int index, MetadataKey<T> key, T value) {
+    private record Value<T>(int index, EntityDataType<T> type, T value) {
         private EntityData<T> toEntityData() {
-            return new EntityData<>(index, key.type(), value);
+            return new EntityData<>(index, type, value);
         }
     }
 }

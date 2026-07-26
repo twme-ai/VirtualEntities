@@ -4,7 +4,7 @@
 [![JitPack](https://jitpack.io/v/twme-ai/VirtualEntities.svg)](https://jitpack.io/#twme-ai/VirtualEntities)
 [![License](https://img.shields.io/github/license/twme-ai/VirtualEntities)](LICENSE)
 
-VirtualEntities is a small, platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, viewer lifecycle management, movement, version-aware metadata, equipment, attributes, and passenger relationships.
+VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, viewer lifecycle management, relative and absolute movement, generated version-aware metadata keys, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
 
 Metadata indexes are resolved from data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/). The dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
 
@@ -56,6 +56,7 @@ pig.addViewer(packetEventsUser)
         .spawn(new Location(10.5, 64, -3.5, 90, 0));
 
 pig.teleport(new Location(12, 64, -3, 90, 0));
+pig.updateLocation(new Location(12.5, 64, -3, 90, 0), true);
 pig.rotateHead(45);
 pig.velocity(new Vector3d(0, 0.25, 0));
 pig.setEquipment(
@@ -69,15 +70,14 @@ VirtualEntity passenger = entities.entity(EntityTypes.CHICKEN).build()
         .spawn(new Location(12, 64, -3, 90, 0));
 pig.addPassenger(passenger);
 
-MetadataKey<Integer> boostTime = MetadataKey.of("BOOST_TIME", EntityDataTypes.INT);
-pig.metadata().set(boostTime, 40);
+pig.metadata().set(GeneratedEntityMetadataKeys.Pig.BOOST_TIME, 40);
 pig.syncMetadata();
 
 pig.removeViewer(packetEventsUser);
 pig.remove();
 ```
 
-Define entity-specific fields with `MetadataKey.of`, as shown with `BOOST_TIME`. Glowing is one bit within `SHARED_FLAGS`, not an independent protocol field, so callers should use a small bitmask helper when changing that flag.
+Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. Use `MetadataKey.of` for custom fields. Glowing is one bit within `SHARED_FLAGS`, not an independent protocol field, so callers should use a small bitmask helper when changing that flag.
 
 The default `metadata()` builder resolves both the current PacketEvents server version and the entity-data name. When kennytv has no exact release document, VirtualEntities selects the newest bundled numeric snapshot at or before that release. PacketEvents entity aliases and parent types are resolved automatically. The explicit `metadata(version, entityDataName)` overload remains available for custom mappings.
 
@@ -85,9 +85,69 @@ Field names are resolved through the selected entity's complete inheritance chai
 
 Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
 
+### Virtual players
+
+Player info and spawn packet transitions are handled automatically across protocol versions:
+
+```java
+UserProfile profile = new UserProfile(npcUuid, "Guide");
+profile.setTextureProperties(List.of(textureProperty));
+
+VirtualEntity guide = entities.player(profile)
+        .metadata()
+        .build()
+        .setGameMode(GameMode.CREATIVE)
+        .setLatency(20)
+        .setListed(false)
+        .addViewer(packetEventsUser)
+        .spawn(new Location(8, 64, 8, 180, 0));
+```
+
+`setPlayerProfile` safely refreshes names and skins for current viewers. A profile UUID is the entity UUID and cannot change after construction.
+
+### Audience tracking and interactions
+
+`VirtualAudienceTracker<C>` bridges platform-specific player or chunk contexts without adding a Bukkit or proxy dependency. Supply a viewer adapter and a visibility rule, then call `update` from movement/chunk events or `reconcile` with the current online candidates:
+
+```java
+VirtualAudienceTracker<PlayerContext> tracker = VirtualAudienceTracker.of(
+        pig,
+        context -> VirtualViewer.of(context.user()),
+        context -> context.sameWorld(pig) && context.isTrackingChunk(pig)
+);
+
+tracker.reconcile(currentPlayers);
+```
+
+Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. The manager accepts only spawned entities visible to that actor, then notifies listeners registered with `onInteraction`:
+
+```java
+VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> {
+    if (interaction.action() == VirtualEntityInteraction.Action.ATTACK) {
+        // Handle the virtual entity attack.
+    }
+});
+```
+
 For custom transports and tests, use `VirtualViewer.of(UUID, Consumer<PacketWrapper<?>>)` instead of a PacketEvents `User`.
 
 Call `entities.close()` during plugin shutdown. It despawns and unregisters every managed virtual entity.
+
+## Testing
+
+The normal verification gate runs unit, protocol-boundary, generated-source, and concurrency tests:
+
+```bash
+./gradlew clean build
+```
+
+The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.13.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, and an attack routed back through `handleInteraction`:
+
+```bash
+./gradlew mineflayerE2e
+```
+
+The E2E task requires Java 21 or newer, Node.js 22 or newer, `curl`, `jq`, and network access. It downloads checksummed server/plugin artifacts into `build`, accepts the Minecraft EULA only inside a temporary test server, and removes the generated world and server process on exit. The same task is available from the repository's manually triggered `Mineflayer E2E` workflow.
 
 ## Updating entity data
 
@@ -98,11 +158,11 @@ Run the same validated sync used by automation:
 ./gradlew test
 ```
 
-The source JSON is retained under `src/main/resources/entity-data` for auditability. Runtime schemas are loaded lazily and cached by Minecraft version.
+The source JSON is retained under `src/main/resources/entity-data` for auditability. The sync command also regenerates `GeneratedEntityMetadataKeys`; CI rejects stale generated code or an unmapped upstream data type. Runtime schemas are loaded lazily and cached by Minecraft version.
 
 ## Scope
 
-The current API covers generic entities. Player profiles/tab-list handling, interactions, relative movement, platform chunk tracking, and generated typed keys for every entity family are planned additions. The public API will remain based on PacketEvents rather than server internals.
+The core API is based entirely on PacketEvents and does not register global listeners or depend on server internals. Platform plugins remain responsible for forwarding their lifecycle, chunk-tracking, and packet-listener events into the provided manager and audience tracker. Dedicated Paper or Velocity convenience modules may be added separately without coupling the core artifact to either platform.
 
 ## Credits
 
