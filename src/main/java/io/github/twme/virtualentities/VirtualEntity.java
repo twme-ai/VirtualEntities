@@ -1,6 +1,12 @@
 package io.github.twme.virtualentities;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.manager.server.ServerVersion;
+import com.github.retrooper.packetevents.protocol.attribute.Attribute;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
+import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.util.Vector3d;
@@ -11,15 +17,23 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityVelocity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetPassengers;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateAttributes;
 import io.github.twme.virtualentities.metadata.EntityMetadataSchema;
 import io.github.twme.virtualentities.metadata.VirtualMetadata;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** A client-side entity whose lifecycle is represented entirely by PacketEvents packets. */
@@ -31,6 +45,10 @@ public final class VirtualEntity {
     private final int objectData;
     private final VirtualMetadata metadata;
     private final Map<UUID, VirtualViewer> viewers = new LinkedHashMap<>();
+    private final Map<EquipmentSlot, ItemStack> equipment = new EnumMap<>(EquipmentSlot.class);
+    private final Map<Attribute, WrapperPlayServerUpdateAttributes.Property> attributes = new LinkedHashMap<>();
+    private final Set<VirtualEntity> passengers = new LinkedHashSet<>();
+    private VirtualEntity vehicle;
     private Location location;
     private Vector3d velocity;
     private float headYaw;
@@ -46,13 +64,18 @@ public final class VirtualEntity {
         this.objectData = builder.objectData;
         this.velocity = builder.velocity;
         this.headYaw = builder.headYaw;
-        if ((builder.metadataVersion == null) != (builder.entityDataName == null)) {
-            throw new IllegalStateException("metadataVersion and entityDataName must be configured together");
-        }
-        if (builder.metadataVersion == null) {
+        if (!builder.metadataEnabled) {
             this.metadata = null;
         } else {
-            EntityMetadataSchema schema = manager.metadataRegistry().schema(builder.metadataVersion, builder.entityDataName);
+            String requestedVersion = builder.metadataVersion != null
+                    ? builder.metadataVersion
+                    : PacketEvents.getAPI().getServerManager().getVersion().getReleaseName();
+            EntityMetadataSchema schema = builder.entityDataName != null
+                    ? manager.metadataRegistry().schema(
+                            manager.metadataRegistry().resolveVersion(requestedVersion),
+                            builder.entityDataName
+                    )
+                    : manager.metadataRegistry().schema(requestedVersion, type);
             this.metadata = new VirtualMetadata(schema);
         }
         manager.register(this);
@@ -99,6 +122,138 @@ public final class VirtualEntity {
 
     public synchronized Collection<VirtualViewer> viewers() {
         return Collections.unmodifiableList(java.util.List.copyOf(viewers.values()));
+    }
+
+    /** Returns the current equipment snapshot. */
+    public synchronized Map<EquipmentSlot, ItemStack> equipment() {
+        return Collections.unmodifiableMap(new EnumMap<>(equipment));
+    }
+
+    /** Sets one equipment slot and immediately updates current viewers when spawned. */
+    public synchronized VirtualEntity setEquipment(EquipmentSlot slot, ItemStack item) {
+        ensureActive();
+        equipment.put(Objects.requireNonNull(slot, "slot"), Objects.requireNonNull(item, "item"));
+        if (spawned) {
+            broadcast(equipmentPacket(slot, item));
+        }
+        return this;
+    }
+
+    /** Clears one equipment slot and immediately updates current viewers when spawned. */
+    public synchronized VirtualEntity clearEquipment(EquipmentSlot slot) {
+        ensureActive();
+        Objects.requireNonNull(slot, "slot");
+        equipment.remove(slot);
+        if (spawned) {
+            broadcast(equipmentPacket(slot, ItemStack.EMPTY));
+        }
+        return this;
+    }
+
+    /** Returns the current attribute properties keyed by PacketEvents attribute. */
+    public synchronized Map<Attribute, WrapperPlayServerUpdateAttributes.Property> attributes() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(attributes));
+    }
+
+    /** Sets an attribute without modifiers. */
+    public VirtualEntity setAttribute(Attribute attribute, double value) {
+        return setAttribute(attribute, value, List.of());
+    }
+
+    /** Sets an attribute and its complete modifier list. */
+    public synchronized VirtualEntity setAttribute(
+            Attribute attribute,
+            double value,
+            List<WrapperPlayServerUpdateAttributes.PropertyModifier> modifiers
+    ) {
+        ensureActive();
+        WrapperPlayServerUpdateAttributes.Property property = new WrapperPlayServerUpdateAttributes.Property(
+                Objects.requireNonNull(attribute, "attribute"),
+                value,
+                List.copyOf(Objects.requireNonNull(modifiers, "modifiers"))
+        );
+        attributes.put(attribute, property);
+        if (spawned) {
+            broadcast(new WrapperPlayServerUpdateAttributes(entityId, List.of(property)));
+        }
+        return this;
+    }
+
+    /** Restores an attribute to its PacketEvents default value. */
+    public synchronized VirtualEntity resetAttribute(Attribute attribute) {
+        ensureActive();
+        Objects.requireNonNull(attribute, "attribute");
+        attributes.remove(attribute);
+        if (spawned) {
+            WrapperPlayServerUpdateAttributes.Property reset = new WrapperPlayServerUpdateAttributes.Property(
+                    attribute,
+                    attribute.getDefaultValue(),
+                    List.of()
+            );
+            broadcast(new WrapperPlayServerUpdateAttributes(entityId, List.of(reset)));
+        }
+        return this;
+    }
+
+    /** Returns this entity's current passengers in protocol order. */
+    public synchronized List<VirtualEntity> passengers() {
+        return List.copyOf(passengers);
+    }
+
+    /** Returns the vehicle this entity is riding, if any. */
+    public synchronized Optional<VirtualEntity> vehicle() {
+        return Optional.ofNullable(vehicle);
+    }
+
+    /** Adds a managed virtual entity as a passenger. */
+    public synchronized VirtualEntity addPassenger(VirtualEntity passenger) {
+        ensureActive();
+        Objects.requireNonNull(passenger, "passenger").ensureActive();
+        if (passenger == this) {
+            throw new IllegalArgumentException("An entity cannot ride itself");
+        }
+        if (passenger.manager != manager) {
+            throw new IllegalArgumentException("Passenger must belong to the same VirtualEntityManager");
+        }
+        for (VirtualEntity ancestor = this; ancestor != null; ancestor = ancestor.vehicle) {
+            if (ancestor == passenger) {
+                throw new IllegalArgumentException("Passenger relationship would create a cycle");
+            }
+        }
+        if (passenger.vehicle == this) {
+            return this;
+        }
+        if (passenger.vehicle != null) {
+            passenger.vehicle.removePassenger(passenger);
+        }
+        passengers.add(passenger);
+        passenger.vehicle = this;
+        syncPassengersIfSpawned();
+        return this;
+    }
+
+    /** Removes a passenger while preserving all other passengers. */
+    public synchronized VirtualEntity removePassenger(VirtualEntity passenger) {
+        ensureActive();
+        Objects.requireNonNull(passenger, "passenger");
+        if (passengers.remove(passenger)) {
+            passenger.vehicle = null;
+            syncPassengersIfSpawned();
+        }
+        return this;
+    }
+
+    /** Removes every passenger from this entity. */
+    public synchronized VirtualEntity clearPassengers() {
+        ensureActive();
+        if (!passengers.isEmpty()) {
+            for (VirtualEntity passenger : passengers) {
+                passenger.vehicle = null;
+            }
+            passengers.clear();
+            syncPassengersIfSpawned();
+        }
+        return this;
     }
 
     public VirtualEntity addViewer(User user) {
@@ -189,6 +344,7 @@ public final class VirtualEntity {
             return;
         }
         despawn();
+        detachPassengerRelationships();
         viewers.clear();
         removed = true;
         manager.unregister(this);
@@ -198,6 +354,47 @@ public final class VirtualEntity {
         viewer.send(new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity));
         if (metadata != null && !metadata.entityData().isEmpty()) {
             viewer.send(new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
+        }
+        for (Map.Entry<EquipmentSlot, ItemStack> entry : equipment.entrySet()) {
+            viewer.send(equipmentPacket(entry.getKey(), entry.getValue()));
+        }
+        if (!attributes.isEmpty()) {
+            viewer.send(new WrapperPlayServerUpdateAttributes(entityId, List.copyOf(attributes.values())));
+        }
+        if (!passengers.isEmpty()) {
+            viewer.send(passengersPacket());
+        }
+    }
+
+    private WrapperPlayServerEntityEquipment equipmentPacket(EquipmentSlot slot, ItemStack item) {
+        return new WrapperPlayServerEntityEquipment(entityId, List.of(new Equipment(slot, item)));
+    }
+
+    private WrapperPlayServerSetPassengers passengersPacket() {
+        return new WrapperPlayServerSetPassengers(
+                entityId,
+                passengers.stream().mapToInt(VirtualEntity::entityId).toArray()
+        );
+    }
+
+    private void syncPassengersIfSpawned() {
+        if (spawned) {
+            broadcast(passengersPacket());
+        }
+    }
+
+    private void detachPassengerRelationships() {
+        if (vehicle != null) {
+            VirtualEntity oldVehicle = vehicle;
+            vehicle = null;
+            oldVehicle.passengers.remove(this);
+            oldVehicle.syncPassengersIfSpawned();
+        }
+        if (!passengers.isEmpty()) {
+            for (VirtualEntity passenger : passengers) {
+                passenger.vehicle = null;
+            }
+            passengers.clear();
         }
     }
 
@@ -231,6 +428,7 @@ public final class VirtualEntity {
         private int objectData;
         private Vector3d velocity = Vector3d.zero();
         private float headYaw;
+        private boolean metadataEnabled;
         private String metadataVersion;
         private String entityDataName;
 
@@ -264,7 +462,24 @@ public final class VirtualEntity {
             return this;
         }
 
+        /** Enables metadata using the current PacketEvents server version and entity type. */
+        public Builder metadata() {
+            this.metadataEnabled = true;
+            this.metadataVersion = null;
+            this.entityDataName = null;
+            return this;
+        }
+
+        /** Enables metadata for a specific server version and resolves the entity type automatically. */
+        public Builder metadata(ServerVersion version) {
+            this.metadataEnabled = true;
+            this.metadataVersion = Objects.requireNonNull(version, "version").getReleaseName();
+            this.entityDataName = null;
+            return this;
+        }
+
         public Builder metadata(String version, String entityDataName) {
+            this.metadataEnabled = true;
             this.metadataVersion = Objects.requireNonNull(version, "version");
             this.entityDataName = Objects.requireNonNull(entityDataName, "entityDataName");
             return this;
