@@ -138,7 +138,7 @@ public final class MetadataKeysGenerator {
                     .getOrDefault(new FieldIdentity(entityName, field.fieldName()), Set.of(field.dataType()))
                     .stream()
                     .map(raw -> Map.entry(raw, mapping(raw)))
-                    .filter(entry -> entry.getValue().javaType().equals(latestMapping.javaType()))
+                    .filter(entry -> compatible(latestMapping, entry.getValue()))
                     .sorted(Map.Entry.comparingByKey())
                     .toList();
             compatible.forEach(entry -> imports.addAll(entry.getValue().imports()));
@@ -168,6 +168,12 @@ public final class MetadataKeysGenerator {
             throw new IllegalStateException("No PacketEvents mapping for entity-data type: " + rawType);
         }
         return mapping;
+    }
+
+    private static boolean compatible(Mapping latest, Mapping historical) {
+        return historical.constant().equals(latest.constant())
+                || latest.constant().equals("OPTIONAL_ADV_COMPONENT")
+                && historical.constant().equals("STRING");
     }
 
     private static Map<String, Mapping> mappings() {

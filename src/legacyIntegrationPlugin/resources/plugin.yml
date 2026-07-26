@@ -1,0 +1,7 @@
+name: VirtualEntitiesLegacyIntegration
+version: ${version}
+main: io.github.twme.virtualentities.integration.legacy.VirtualEntitiesLegacyIntegrationPlugin
+depend: [packetevents]
+commands:
+  velegacytest:
+    description: Starts the legacy VirtualEntities Mineflayer scenario.

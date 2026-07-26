@@ -1281,7 +1281,8 @@ public final class GeneratedEntityMetadataKeys {
                 "CUSTOM_NAME",
                 EntityDataTypes.OPTIONAL_ADV_COMPONENT,
                 Map.ofEntries(
-                        Map.entry("Optional<Component>", EntityDataTypes.OPTIONAL_ADV_COMPONENT)
+                        Map.entry("Optional<Component>", EntityDataTypes.OPTIONAL_ADV_COMPONENT),
+                        Map.entry("String", EntityDataTypes.STRING)
                 )
         );
 
@@ -2052,7 +2053,8 @@ public final class GeneratedEntityMetadataKeys {
                 "LAST_OUTPUT",
                 EntityDataTypes.ADV_COMPONENT,
                 Map.ofEntries(
-                        Map.entry("Component", EntityDataTypes.ADV_COMPONENT)
+                        Map.entry("Component", EntityDataTypes.ADV_COMPONENT),
+                        Map.entry("ITextComponent", EntityDataTypes.ADV_COMPONENT)
                 )
         );
     }
@@ -2603,7 +2605,8 @@ public final class GeneratedEntityMetadataKeys {
                 "ATTACH_FACE",
                 EntityDataTypes.BLOCK_FACE,
                 Map.ofEntries(
-                        Map.entry("Direction", EntityDataTypes.BLOCK_FACE)
+                        Map.entry("Direction", EntityDataTypes.BLOCK_FACE),
+                        Map.entry("EnumFacing", EntityDataTypes.BLOCK_FACE)
                 )
         );
 

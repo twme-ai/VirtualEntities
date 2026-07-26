@@ -1,0 +1,56 @@
+name: Legacy Mineflayer E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify legacy metadata source pins
+        run: ./tools/verify-legacy-entity-data-sources.sh
+
+  paper:
+    needs: sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - minecraft-version: 1.9.4
+            paper-build: 775
+          - minecraft-version: 1.12.2
+            paper-build: 1620
+          - minecraft-version: 1.13.2
+            paper-build: 657
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integration/mineflayer/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build the Java 17 integration artifact
+        run: ./gradlew legacyIntegrationPluginJar
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Verify and run on Java 17
+        env:
+          VE_LEGACY_VERSION: ${{ matrix.minecraft-version }}
+          VE_LEGACY_PAPER_BUILD: ${{ matrix.paper-build }}
+        run: |
+          test "$(javap -verbose -classpath build/libs/VirtualEntitiesLegacyIntegration.jar io.github.twme.virtualentities.integration.legacy.VirtualEntitiesLegacyIntegrationPlugin | awk '/major version/{print $3}')" = 61
+          java -version
+          ./integration/mineflayer/run-legacy-e2e.sh

@@ -1,20 +1,35 @@
 # VirtualEntities
 
 [![CI](https://github.com/twme-ai/VirtualEntities/actions/workflows/ci.yml/badge.svg)](https://github.com/twme-ai/VirtualEntities/actions/workflows/ci.yml)
+[![Legacy E2E](https://github.com/twme-ai/VirtualEntities/actions/workflows/legacy-e2e.yml/badge.svg)](https://github.com/twme-ai/VirtualEntities/actions/workflows/legacy-e2e.yml)
 [![JitPack](https://jitpack.io/v/twme-ai/VirtualEntities.svg)](https://jitpack.io/#twme-ai/VirtualEntities)
 [![License](https://img.shields.io/github/license/twme-ai/VirtualEntities)](LICENSE)
 
 VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, protocol-aware viewer lifecycle management, relative, absolute, and externally synchronized movement state, readable generated metadata, atomic metadata flags and multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
 
-Metadata indexes are resolved from data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/). The dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
+Metadata indexes are resolved from reviewed legacy snapshots for Minecraft 1.9.4 through 1.14.1 and data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/) for newer releases. The merged dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
 
 ## Requirements
 
 - Java 17 or newer
 - PacketEvents 2.13.0 installed by the server/proxy or supplied by your plugin
-- A PacketEvents server version at or after the oldest snapshot in `EntityMetadataRegistry#versions()` when using metadata
+- Minecraft server 1.9.4 or newer
 
 The entity lifecycle API itself is not tied to a Bukkit, Paper, or Velocity API. It works anywhere PacketEvents exposes a `User`.
+
+### Version support
+
+Java and Minecraft compatibility are independent. VirtualEntities is compiled for Java 17 and will not be downgraded to an older Java bytecode level. A legacy Minecraft server must therefore run on a Java 17 or newer JVM, even when that server release originally defaulted to Java 8.
+
+| Range | Status | Evidence |
+|---|---|---|
+| Minecraft 1.9.4-1.13.2 | Supported on Java 17 | Reviewed metadata snapshots, protocol-boundary tests, and Paper + Mineflayer E2E on 1.9.4, 1.12.2, and 1.13.2 |
+| Minecraft 1.14-current | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, protocol-boundary tests, and the current Paper + Mineflayer E2E |
+| Minecraft 1.8.8 and older | Not supported | Requires a separate boolean-as-byte metadata codec and pre-1.9 single-passenger attach semantics |
+
+The legacy compatibility layer selects the historical living-entity, player, painting, lightning, and experience-orb spawn packets and preserves the pre-1.15 embedded metadata layout. It also converts the logical `Optional<Component>` custom-name API to the pre-1.13 string serializer while retaining the logical value returned by `VirtualMetadata#get`.
+
+`VirtualEntity#supports(viewer)` checks whether PacketEvents assigns the entity type an ID in that viewer's protocol. It is not, by itself, a promise that a modern server plus ViaVersion can encode all retained state for an older client. The 1.9.4+ support range above is verified against servers running the corresponding protocol; mixed server/client protocol translation requires a separate per-viewer schema layer.
 
 ## Installation
 
@@ -211,6 +226,16 @@ The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.1
 
 The E2E task requires Java 21 or newer, Node.js 22 or newer, `curl`, `jq`, and network access. It downloads checksummed server/plugin artifacts into `build`, accepts the Minecraft EULA only inside a temporary test server, and removes the generated world and server process on exit. The same task is available from the repository's manually triggered `Mineflayer E2E` workflow.
 
+The legacy black-box workflow builds the core and fixture as Java 17 bytecode, switches the runner to a Java 17 JVM, then tests Paper 1.9.4, 1.12.2, and 1.13.2. It verifies living spawn packets, legacy string metadata, equipment, passengers, relative movement, and inbound attacks. Run one matrix entry locally with:
+
+```bash
+./gradlew legacyIntegrationPluginJar
+VE_LEGACY_VERSION=1.9.4 \
+VE_LEGACY_PAPER_BUILD=775 \
+VE_E2E_JAVA=/path/to/java17/bin/java \
+./integration/mineflayer/run-legacy-e2e.sh
+```
+
 ## Updating entity data
 
 Run the same validated sync used by automation:
@@ -220,7 +245,7 @@ Run the same validated sync used by automation:
 ./gradlew test
 ```
 
-The source JSON is retained under `src/main/resources/entity-data` for auditability. The sync command also regenerates `GeneratedEntityMetadataKeys`; CI rejects stale generated code or an unmapped upstream data type. Runtime schemas are loaded lazily and cached by Minecraft version.
+The source JSON is retained under `src/main/resources/entity-data` for auditability. Immutable legacy inputs and their pinned Mojang server hashes and Spigot BuildData commits live under `data/legacy-entity-data`. Run `./tools/verify-legacy-entity-data-sources.sh` to revalidate those pins. The sync command merges both data sources and regenerates `GeneratedEntityMetadataKeys`; CI rejects stale generated code or an unmapped upstream data type. Runtime schemas are loaded lazily and cached by Minecraft version.
 
 ## Scope
 
@@ -229,6 +254,8 @@ The core API is based entirely on PacketEvents and does not register global list
 ## Credits
 
 - [PacketEvents](https://github.com/retrooper/packetevents) by retrooper and contributors provides the cross-version packet and protocol API used by this library.
+- [ViaVersion](https://github.com/ViaVersion/ViaVersion) and [ViaBackwards](https://github.com/ViaVersion/ViaBackwards) provide independently maintained protocol transition evidence used to review legacy metadata boundaries.
+- [Spigot BuildData](https://hub.spigotmc.org/stash/projects/SPIGOT/repos/builddata) provides version-pinned class and member identities for legacy Mojang server artifacts.
 - [EntityLib](https://github.com/Tofaa2/EntityLib) by Tofaa2 informed the wrapper entity lifecycle and metadata API direction.
 - [PacketEntities](https://github.com/3add/PacketEntities) by 3add informed the builder, viewer-management, and data-generation design.
 - [TextDisplayShapes](https://github.com/TWME-TW/TextDisplayShapes) provided the renderer use case for readable metadata and atomic multi-entity updates.

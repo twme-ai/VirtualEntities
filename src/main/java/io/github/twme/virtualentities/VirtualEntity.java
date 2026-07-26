@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.attribute.Attribute;
 import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
@@ -12,7 +13,9 @@ import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.player.GameMode;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
+import com.github.retrooper.packetevents.protocol.world.Direction;
 import com.github.retrooper.packetevents.protocol.world.Location;
+import com.github.retrooper.packetevents.protocol.world.PaintingType;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
@@ -27,7 +30,11 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetPassengers;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnExperienceOrb;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnLivingEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPainting;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnWeatherEntity;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateAttributes;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfo;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoRemove;
@@ -57,6 +64,9 @@ public final class VirtualEntity {
     private final UUID uuid;
     private final EntityType type;
     private final int objectData;
+    private final short experience;
+    private final PaintingType paintingType;
+    private final Direction paintingDirection;
     private final VirtualMetadata metadata;
     private final Map<UUID, VirtualViewer> viewers = new LinkedHashMap<>();
     private final Map<EquipmentSlot, ItemStack> equipment = new EnumMap<>(EquipmentSlot.class);
@@ -82,6 +92,9 @@ public final class VirtualEntity {
         this.uuid = builder.uuid != null ? builder.uuid : UUID.randomUUID();
         this.type = builder.type;
         this.objectData = builder.objectData;
+        this.experience = builder.experience;
+        this.paintingType = builder.paintingType;
+        this.paintingDirection = builder.paintingDirection;
         this.velocity = builder.velocity;
         this.headYaw = builder.headYaw;
         if (builder.playerProfile != null) {
@@ -632,22 +645,13 @@ public final class VirtualEntity {
         if (playerProfile != null) {
             manager.send(viewer, playerInfoAddPacket());
         }
-        boolean metadataIncludedInSpawn = playerProfile != null && legacyPlayerSpawn();
-        if (metadataIncludedInSpawn) {
-            manager.send(viewer, new WrapperPlayServerSpawnPlayer(
-                    entityId,
-                    uuid,
-                    location,
-                    metadata == null ? List.of() : metadata.entityData()
-            ));
-        } else {
-            manager.send(
-                    viewer,
-                    new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity)
-            );
-        }
-        if (!metadataIncludedInSpawn && metadata != null && !metadata.entityData().isEmpty()) {
-            manager.send(viewer, new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
+        ServerVersion version = serverVersion();
+        List<com.github.retrooper.packetevents.protocol.entity.data.EntityData<?>> entityData =
+                metadata == null ? List.of() : metadata.entityData();
+        boolean metadataIncludedInSpawn = metadataIncludedInSpawn(version);
+        manager.send(viewer, spawnPacket(version, metadataIncludedInSpawn ? entityData : List.of()));
+        if (!metadataIncludedInSpawn && !entityData.isEmpty()) {
+            manager.send(viewer, new WrapperPlayServerEntityMetadata(entityId, entityData));
         }
         if (playerProfile != null) {
             manager.send(
@@ -668,6 +672,69 @@ public final class VirtualEntity {
         if (!passengers.isEmpty()) {
             manager.send(viewer, passengersPacket());
         }
+    }
+
+    private PacketWrapper<?> spawnPacket(
+            ServerVersion version,
+            List<com.github.retrooper.packetevents.protocol.entity.data.EntityData<?>> entityData
+    ) {
+        if (playerProfile != null && version.isOlderThan(ServerVersion.V_1_20_2)) {
+            return new WrapperPlayServerSpawnPlayer(entityId, uuid, location, entityData);
+        }
+        if (type == EntityTypes.EXPERIENCE_ORB && version.isOlderThan(ServerVersion.V_1_21_5)) {
+            return new WrapperPlayServerSpawnExperienceOrb(
+                    entityId,
+                    location.getX(),
+                    location.getY(),
+                    location.getZ(),
+                    experience
+            );
+        }
+        if (type == EntityTypes.LIGHTNING_BOLT && version.isOlderThan(ServerVersion.V_1_16)) {
+            return new WrapperPlayServerSpawnWeatherEntity(
+                    entityId,
+                    (byte) 1,
+                    location.getX(),
+                    location.getY(),
+                    location.getZ()
+            );
+        }
+        if (type == EntityTypes.PAINTING && version.isOlderThan(ServerVersion.V_1_19)) {
+            return new WrapperPlayServerSpawnPainting(
+                    entityId,
+                    uuid,
+                    paintingType,
+                    location.getPosition().toVector3i(),
+                    paintingDirection
+            );
+        }
+        if (type.isInstanceOf(EntityTypes.LIVINGENTITY) && version.isOlderThan(ServerVersion.V_1_19)) {
+            return new WrapperPlayServerSpawnLivingEntity(
+                    entityId,
+                    uuid,
+                    type,
+                    location,
+                    headYaw,
+                    velocity,
+                    entityData
+            );
+        }
+        return new WrapperPlayServerSpawnEntity(
+                entityId,
+                uuid,
+                type,
+                location,
+                headYaw,
+                type == EntityTypes.EXPERIENCE_ORB ? experience : objectData,
+                velocity
+        );
+    }
+
+    private boolean metadataIncludedInSpawn(ServerVersion version) {
+        if (!version.isOlderThan(ServerVersion.V_1_15)) {
+            return false;
+        }
+        return playerProfile != null || type.isInstanceOf(EntityTypes.LIVINGENTITY);
     }
 
     private WrapperPlayServerEntityEquipment equipmentPacket(EquipmentSlot slot, ItemStack item) {
@@ -733,13 +800,11 @@ public final class VirtualEntity {
     }
 
     private boolean modernPlayerInfo() {
-        return PacketEvents.getAPI().getServerManager().getVersion()
-                .isNewerThanOrEquals(ServerVersion.V_1_19_3);
+        return serverVersion().isNewerThanOrEquals(ServerVersion.V_1_19_3);
     }
 
-    private boolean legacyPlayerSpawn() {
-        return !PacketEvents.getAPI().getServerManager().getVersion()
-                .isNewerThanOrEquals(ServerVersion.V_1_20_2);
+    private static ServerVersion serverVersion() {
+        return PacketEvents.getAPI().getServerManager().getVersion();
     }
 
     private WrapperPlayServerSetPassengers passengersPacket() {
@@ -865,6 +930,9 @@ public final class VirtualEntity {
         private Integer entityId;
         private UUID uuid;
         private int objectData;
+        private short experience = 1;
+        private PaintingType paintingType = PaintingType.KEBAB;
+        private Direction paintingDirection = Direction.SOUTH;
         private Vector3d velocity = Vector3d.zero();
         private float headYaw;
         private boolean metadataEnabled;
@@ -889,6 +957,31 @@ public final class VirtualEntity {
 
         public Builder objectData(int objectData) {
             this.objectData = objectData;
+            return this;
+        }
+
+        /** Sets the value retained by an experience orb's legacy spawn packet. */
+        public Builder experience(short experience) {
+            if (type != EntityTypes.EXPERIENCE_ORB) {
+                throw new IllegalStateException("Experience can only be configured for an experience orb");
+            }
+            if (experience < 0) {
+                throw new IllegalArgumentException("Experience cannot be negative");
+            }
+            this.experience = experience;
+            return this;
+        }
+
+        /** Sets the motive and facing retained by a pre-1.19 painting spawn packet. */
+        public Builder painting(PaintingType paintingType, Direction direction) {
+            if (type != EntityTypes.PAINTING) {
+                throw new IllegalStateException("Painting state can only be configured for a painting");
+            }
+            this.paintingType = Objects.requireNonNull(paintingType, "paintingType");
+            this.paintingDirection = Objects.requireNonNull(direction, "direction");
+            if (direction.getHorizontalIndex() < 0) {
+                throw new IllegalArgumentException("Painting direction must be horizontal");
+            }
             return this;
         }
 

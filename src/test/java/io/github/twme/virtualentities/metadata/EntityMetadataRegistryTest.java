@@ -8,12 +8,15 @@ import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.util.Vector3f;
 import io.github.twme.virtualentities.PacketEventsTestSupport;
+import net.kyori.adventure.text.Component;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,12 +39,87 @@ class EntityMetadataRegistryTest {
 
     @Test
     void loadsBundledVersionsAndInheritedFields() {
+        assertTrue(registry.versions().contains("1.9.4"));
+        assertTrue(registry.versions().contains("1.13.1"));
+        assertTrue(registry.versions().contains("1.13.2"));
+        assertTrue(registry.versions().contains("1.14"));
+        assertTrue(registry.versions().contains("1.14.1"));
         assertTrue(registry.versions().contains("1.21.11"));
 
         EntityMetadataSchema pig = registry.schema("1.21.11", "Pig");
         assertEquals(0, pig.require("SHARED_FLAGS").index());
         assertEquals(17, pig.require("BOOST_TIME").index());
         assertEquals(18, pig.require("VARIANT").index());
+    }
+
+    @Test
+    void resolvesReviewedLegacySchemasAndProtocolChangePoints() {
+        EntityMetadataSchema pig194 = registry.schema("1.9.4", EntityTypes.PIG);
+        assertEquals("Pig", pig194.entityName());
+        assertEquals(0, pig194.require("SHARED_FLAGS").index());
+        assertEquals(2, pig194.require("CUSTOM_NAME").index());
+        assertEquals("String", pig194.require("CUSTOM_NAME").dataType());
+        assertEquals(12, pig194.require("SADDLE").index());
+
+        EntityMetadataSchema arrow113 = registry.schema("1.13", EntityTypes.ARROW);
+        EntityMetadataSchema arrow1131 = registry.schema("1.13.1", EntityTypes.ARROW);
+        EntityMetadataSchema arrow1132 = registry.schema("1.13.2", EntityTypes.ARROW);
+        assertTrue(arrow113.find("OWNERUUID").isEmpty());
+        assertEquals(7, arrow113.require("ID_EFFECT_COLOR").index());
+        assertEquals(7, arrow1131.require("OWNERUUID").index());
+        assertEquals(8, arrow1131.require("ID_EFFECT_COLOR").index());
+        assertEquals(7, arrow1132.require("OWNERUUID").index());
+        assertEquals(8, arrow1132.require("ID_EFFECT_COLOR").index());
+
+        EntityMetadataSchema pig1132 = registry.schema("1.13.2", EntityTypes.PIG);
+        assertTrue(pig1132.find("POSE").isEmpty());
+        assertTrue(pig1132.find("SLEEPING_POS").isEmpty());
+        assertEquals(13, pig1132.require("SADDLE").index());
+        assertEquals(6, registry.schema("1.14.4", EntityTypes.PIG).require("POSE").index());
+
+        EntityMetadataSchema villager = registry.schema("1.13.2", EntityTypes.VILLAGER);
+        assertEquals(13, villager.require("PROFESSION").index());
+        assertTrue(villager.find("UNHAPPY_COUNTER").isEmpty());
+
+        EntityMetadataSchema zombie = registry.schema("1.13.2", EntityTypes.ZOMBIE);
+        assertEquals(14, zombie.require("ARMS_RAISED").index());
+        assertEquals(15, zombie.require("DROWNED_CONVERSION").index());
+
+        EntityMetadataSchema zombieVillager = registry.schema("1.13.2", EntityTypes.ZOMBIE_VILLAGER);
+        assertEquals(16, zombieVillager.require("CONVERTING").index());
+        assertEquals(17, zombieVillager.require("PROFESSION").index());
+
+        assertEquals(
+                12,
+                registry.schema("1.13.2", EntityTypes.SKELETON).require("SWINGING_ARMS").index()
+        );
+        assertEquals(
+                13,
+                registry.schema("1.13.2", EntityTypes.EVOKER).require("SPELL_CASTING").index()
+        );
+
+        EntityMetadataSchema villager114 = registry.schema("1.14", EntityTypes.VILLAGER);
+        EntityMetadataSchema villager1141 = registry.schema("1.14.1", EntityTypes.VILLAGER);
+        assertTrue(villager114.find("UNHAPPY_COUNTER").isEmpty());
+        assertEquals(15, villager114.require("VILLAGER_DATA").index());
+        assertEquals(15, villager1141.require("UNHAPPY_COUNTER").index());
+        assertEquals(16, villager1141.require("VILLAGER_DATA").index());
+    }
+
+    @Test
+    void encodesLogicalCustomNamesForLegacyAndModernMetadata() {
+        Component name = Component.text("Legacy name");
+        VirtualMetadata legacy = new VirtualMetadata(registry.schema("1.12.2", EntityTypes.PIG));
+        legacy.set(EntityMetadataKeys.CUSTOM_NAME, Optional.of(name));
+
+        assertEquals(Optional.of(name), legacy.get(EntityMetadataKeys.CUSTOM_NAME).orElseThrow());
+        assertSame(EntityDataTypes.STRING, legacy.entityData().get(0).getType());
+        assertEquals("Legacy name", legacy.entityData().get(0).getValue());
+
+        VirtualMetadata modern = new VirtualMetadata(registry.schema("1.13.2", EntityTypes.PIG));
+        modern.set(EntityMetadataKeys.CUSTOM_NAME, Optional.of(name));
+        assertSame(EntityDataTypes.OPTIONAL_ADV_COMPONENT, modern.entityData().get(0).getType());
+        assertEquals(Optional.of(name), modern.entityData().get(0).getValue());
     }
 
     @Test
@@ -85,6 +163,36 @@ class EntityMetadataRegistryTest {
                 registry.schema("1.21.11", type);
             } catch (IllegalArgumentException exception) {
                 unresolved.add(type.getName().toString());
+            }
+        }
+
+        assertEquals(List.of(), unresolved);
+    }
+
+    @Test
+    void resolvesEveryRegisteredEntityTypeAcrossLegacyProtocolBoundaries() {
+        Map<String, ClientVersion> boundaries = new LinkedHashMap<>();
+        boundaries.put("1.9.4", ClientVersion.V_1_9_3);
+        boundaries.put("1.10", ClientVersion.V_1_10);
+        boundaries.put("1.11", ClientVersion.V_1_11);
+        boundaries.put("1.12", ClientVersion.V_1_12);
+        boundaries.put("1.13", ClientVersion.V_1_13);
+        boundaries.put("1.13.1", ClientVersion.V_1_13_1);
+        boundaries.put("1.13.2", ClientVersion.V_1_13_2);
+        boundaries.put("1.14", ClientVersion.V_1_14);
+        boundaries.put("1.14.1", ClientVersion.V_1_14_1);
+
+        List<String> unresolved = new ArrayList<>();
+        for (Map.Entry<String, ClientVersion> boundary : boundaries.entrySet()) {
+            for (EntityType type : EntityTypes.values()) {
+                if (type.getId(boundary.getValue()) < 0) {
+                    continue;
+                }
+                try {
+                    registry.schema(boundary.getKey(), type);
+                } catch (IllegalArgumentException exception) {
+                    unresolved.add(boundary.getKey() + ":" + type.getName().getKey());
+                }
             }
         }
 

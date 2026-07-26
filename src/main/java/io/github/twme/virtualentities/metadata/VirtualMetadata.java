@@ -15,7 +15,7 @@ import java.util.Optional;
 /** Mutable, type-safe metadata values backed by a versioned schema. */
 public final class VirtualMetadata {
     private final EntityMetadataSchema schema;
-    private final Map<String, Value<?>> values = new LinkedHashMap<>();
+    private final Map<String, Value> values = new LinkedHashMap<>();
 
     public VirtualMetadata(EntityMetadataSchema schema) {
         this.schema = Objects.requireNonNull(schema, "schema");
@@ -28,9 +28,16 @@ public final class VirtualMetadata {
     public synchronized <T> VirtualMetadata set(MetadataKey<T> key, T value) {
         Objects.requireNonNull(key, "key");
         MetadataField field = schema.require(key.fieldName());
+        T checkedValue = Objects.requireNonNull(value, "value");
         values.put(
                 key.fieldName(),
-                new Value<>(field.index(), key.type(field.dataType()), Objects.requireNonNull(value, "value"))
+                new Value(
+                        field.index(),
+                        key.type(field.dataType()),
+                        key.encode(field.dataType(), checkedValue),
+                        key.type(),
+                        checkedValue
+                )
         );
         return this;
     }
@@ -39,18 +46,18 @@ public final class VirtualMetadata {
     @SuppressWarnings("unchecked")
     public synchronized <T> Optional<T> get(MetadataKey<T> key) {
         Objects.requireNonNull(key, "key");
-        Value<?> value = values.get(key.fieldName());
+        Value value = values.get(key.fieldName());
         if (value == null) {
             return Optional.empty();
         }
         MetadataField field = schema.require(key.fieldName());
-        EntityDataType<T> expectedType = key.type(field.dataType());
-        if (!expectedType.equals(value.type())) {
+        key.type(field.dataType());
+        if (!key.type().equals(value.logicalType())) {
             throw new IllegalArgumentException(
                     "Metadata key type does not match the explicitly assigned value for '" + key.fieldName() + "'"
             );
         }
-        return Optional.of((T) value.value());
+        return Optional.of((T) value.logicalValue());
     }
 
     /** Returns whether a value has been explicitly assigned for the key's field name. */
@@ -74,7 +81,7 @@ public final class VirtualMetadata {
         byte updated = (byte) (enabled ? current | maskBits : current & ~maskBits);
         values.put(
                 key.fieldName(),
-                new Value<>(resolved.field().index(), resolved.type(), updated)
+                new Value(resolved.field().index(), resolved.type(), updated, key.type(), updated)
         );
         return this;
     }
@@ -99,7 +106,7 @@ public final class VirtualMetadata {
 
     public synchronized List<EntityData<?>> entityData() {
         List<EntityData<?>> result = new ArrayList<>(values.size());
-        for (Value<?> value : values.values()) {
+        for (Value value : values.values()) {
             result.add(value.toEntityData());
         }
         result.sort(java.util.Comparator.comparingInt(EntityData::getIndex));
@@ -112,21 +119,23 @@ public final class VirtualMetadata {
             throw new IllegalArgumentException("Metadata flag mask cannot be zero");
         }
         MetadataField field = schema.require(key.fieldName());
-        EntityDataType<Byte> type = key.type(field.dataType());
-        if (!EntityDataTypes.BYTE.equals(type)) {
+        EntityDataType<?> resolvedType = key.type(field.dataType());
+        if (!EntityDataTypes.BYTE.equals(resolvedType)) {
             throw new IllegalArgumentException(
                     "Metadata field '" + key.fieldName() + "' is not byte-compatible"
             );
         }
+        @SuppressWarnings("unchecked")
+        EntityDataType<Byte> type = (EntityDataType<Byte>) resolvedType;
         return new ResolvedByteKey(field, type);
     }
 
     private byte explicitByteValue(ResolvedByteKey resolved) {
-        Value<?> value = values.get(resolved.field().fieldName());
+        Value value = values.get(resolved.field().fieldName());
         if (value == null) {
             return 0;
         }
-        if (!resolved.type().equals(value.type()) || !(value.value() instanceof Byte byteValue)) {
+        if (!resolved.type().equals(value.type()) || !(value.wireValue() instanceof Byte byteValue)) {
             throw new IllegalArgumentException(
                     "Metadata field '" + resolved.field().fieldName() + "' does not contain a byte value"
             );
@@ -137,9 +146,16 @@ public final class VirtualMetadata {
     private record ResolvedByteKey(MetadataField field, EntityDataType<Byte> type) {
     }
 
-    private record Value<T>(int index, EntityDataType<T> type, T value) {
-        private EntityData<T> toEntityData() {
-            return new EntityData<>(index, type, value);
+    private record Value(
+            int index,
+            EntityDataType<?> type,
+            Object wireValue,
+            EntityDataType<?> logicalType,
+            Object logicalValue
+    ) {
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        private EntityData<?> toEntityData() {
+            return new EntityData(index, type, wireValue);
         }
     }
 }

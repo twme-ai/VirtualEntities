@@ -1,0 +1,68 @@
+[
+  {
+    "snapshot": "1.9.4",
+    "verificationRelease": "1.9.4",
+    "serverSha1": "edbb7b1758af33d365bf835eb9d13de005b1e274",
+    "buildDataCommit": "9b100f8a6f0d86b5fd5f22f65dd6dd9eba6547d3"
+  },
+  {
+    "snapshot": "1.10",
+    "verificationRelease": "1.10.2",
+    "serverSha1": "3d501b23df53c548254f5e3f66492d178a48db63",
+    "buildDataCommit": "f37e6395d8f7d4865df27a4ab77e0c0d45de8fb9"
+  },
+  {
+    "snapshot": "1.11",
+    "verificationRelease": "1.11",
+    "serverSha1": "48820c84cb1ed502cb5b2fe23b8153d5e4fa61c0",
+    "buildDataCommit": "77931c01e72ff84c004a310b121a72b52f0efdd5"
+  },
+  {
+    "snapshot": "1.11.2",
+    "verificationRelease": "1.11.2",
+    "serverSha1": "f00c294a1576e03fddcac777c3cf4c7d404c4ba4",
+    "buildDataCommit": "8df2731012bb6887630ce7ebd4c7220eabe49a07"
+  },
+  {
+    "snapshot": "1.12",
+    "verificationRelease": "1.12",
+    "serverSha1": "8494e844e911ea0d63878f64da9dcc21f53a3463",
+    "buildDataCommit": "ebd264edb506ff3e72e92dd16b1b68c46905972c"
+  },
+  {
+    "snapshot": "1.12.2",
+    "verificationRelease": "1.12.2",
+    "serverSha1": "886945bfb2b978778c3a0288fd7fab09d315b25f",
+    "buildDataCommit": "be360cc298a06b5355ecd057f5b1feb894a73f0f"
+  },
+  {
+    "snapshot": "1.13",
+    "verificationRelease": "1.13",
+    "serverSha1": "d0caafb8438ebd206f99930cfaecfa6c9a13dca0",
+    "buildDataCommit": "351106b6336fc52f6acf94aabd34ac54fc772432"
+  },
+  {
+    "snapshot": "1.13.1",
+    "verificationRelease": "1.13.1",
+    "serverSha1": "fe123682e9cb30031eae351764f653500b7396c9",
+    "buildDataCommit": "83455962edb05fea080f04d6708eede4fa8be7b1"
+  },
+  {
+    "snapshot": "1.13.2",
+    "verificationRelease": "1.13.2",
+    "serverSha1": "3737db93722a9e39eeada7c27e7aca28b144ffa7",
+    "buildDataCommit": "8eaf2804afba334ca73c3e190cf092064c631692"
+  },
+  {
+    "snapshot": "1.14",
+    "verificationRelease": "1.14",
+    "serverSha1": "f1a0073671057f01aa843443fef34330281333ce",
+    "buildDataCommit": "df665071847a0ace1b4b7149f504e5bb8eca992c"
+  },
+  {
+    "snapshot": "1.14.1",
+    "verificationRelease": "1.14.1",
+    "serverSha1": "ed76d597a44c5266be2a7fcd77a8270f1f0bc118",
+    "buildDataCommit": "e5aeddf8cfe1a4d3d4cf930f1bd0617a4a683437"
+  }
+]

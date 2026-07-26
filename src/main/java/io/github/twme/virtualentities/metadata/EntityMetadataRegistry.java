@@ -2,6 +2,8 @@ package io.github.twme.virtualentities.metadata;
 
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
 
 import java.io.IOException;
@@ -23,9 +25,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Loads versioned entity metadata layouts bundled from kennytv entity-data. */
+/** Loads bundled versioned entity metadata layouts from reviewed legacy and kennytv data. */
 public final class EntityMetadataRegistry {
-    private static final Gson GSON = new Gson();
+    private static final Gson GSON = new GsonBuilder()
+            .registerTypeAdapter(MetadataField.class, (com.google.gson.JsonDeserializer<MetadataField>) (
+                    json,
+                    type,
+                    context
+            ) -> {
+                JsonObject object = json.getAsJsonObject();
+                return new MetadataField(
+                        object.get("index").getAsInt(),
+                        object.get("dataType").getAsString(),
+                        object.get("fieldName").getAsString(),
+                        object.has("defaultValue") && !object.get("defaultValue").isJsonNull()
+                                ? object.get("defaultValue").getAsString()
+                                : null
+                );
+            })
+            .create();
     private static final Type VERSION_LIST_TYPE = new TypeToken<List<String>>() { }.getType();
     private static final Type ENTITY_MAP_TYPE = new TypeToken<Map<String, RawEntity>>() { }.getType();
     private static final Pattern RELEASE_VERSION = Pattern.compile("^(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?$");

@@ -5,6 +5,7 @@ readonly PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly BASE_URL="https://kennytv.eu/entity-data"
 readonly OUTPUT_DIR="${PROJECT_DIR}/src/main/resources/entity-data"
 readonly TEMP_DIR="$(mktemp -d)"
+readonly MERGED_DIR="${TEMP_DIR}/merged"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 
 curl --fail --silent --show-error --location \
@@ -37,10 +38,12 @@ while IFS= read -r version; do
   ' "${TEMP_DIR}/${version}.json" >/dev/null
 done < <(jq -r '.[]' "${TEMP_DIR}/versions.json")
 
+node "${PROJECT_DIR}/tools/merge-entity-data.mjs" "${TEMP_DIR}" "${MERGED_DIR}"
+
 mkdir -p "${OUTPUT_DIR}"
 find "${OUTPUT_DIR}" -maxdepth 1 -type f -name '*.json' -delete
-install -m 0644 "${TEMP_DIR}"/*.json "${OUTPUT_DIR}/"
+install -m 0644 "${MERGED_DIR}"/*.json "${OUTPUT_DIR}/"
 
 "${PROJECT_DIR}/gradlew" --quiet --project-dir "${PROJECT_DIR}" generateMetadataKeys
 
-echo "Synced $(jq 'length' "${TEMP_DIR}/versions.json") entity-data versions."
+echo "Synced and merged $(jq 'length' "${OUTPUT_DIR}/versions.json") entity-data versions."

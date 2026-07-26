@@ -1,15 +1,19 @@
 package io.github.twme.virtualentities.metadata;
 
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.util.LegacyComponent;
+import net.kyori.adventure.text.Component;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /** A type-safe metadata field name resolved to a protocol index at runtime. */
 public final class MetadataKey<T> {
     private final String fieldName;
     private final EntityDataType<T> type;
-    private final Map<String, EntityDataType<T>> versionedTypes;
+    private final Map<String, EntityDataType<?>> versionedTypes;
 
     public MetadataKey(String fieldName, EntityDataType<T> type) {
         this(fieldName, type, Map.of());
@@ -18,7 +22,7 @@ public final class MetadataKey<T> {
     private MetadataKey(
             String fieldName,
             EntityDataType<T> type,
-            Map<String, EntityDataType<T>> versionedTypes
+            Map<String, ? extends EntityDataType<?>> versionedTypes
     ) {
         this.fieldName = Objects.requireNonNull(fieldName, "fieldName");
         this.type = Objects.requireNonNull(type, "type");
@@ -36,7 +40,7 @@ public final class MetadataKey<T> {
     public static <T> MetadataKey<T> versioned(
             String fieldName,
             EntityDataType<T> latestType,
-            Map<String, EntityDataType<T>> versionedTypes
+            Map<String, ? extends EntityDataType<?>> versionedTypes
     ) {
         if (Objects.requireNonNull(versionedTypes, "versionedTypes").isEmpty()) {
             throw new IllegalArgumentException("versionedTypes cannot be empty");
@@ -53,17 +57,41 @@ public final class MetadataKey<T> {
         return type;
     }
 
-    EntityDataType<T> type(String rawDataType) {
+    EntityDataType<?> type(String rawDataType) {
         if (versionedTypes.isEmpty()) {
             return type;
         }
-        EntityDataType<T> resolved = versionedTypes.get(rawDataType);
+        EntityDataType<?> resolved = versionedTypes.get(rawDataType);
         if (resolved == null) {
             throw new IllegalArgumentException(
                     "Metadata field '" + fieldName + "' does not support entity-data type '" + rawDataType + "'"
             );
         }
         return resolved;
+    }
+
+    Object encode(String rawDataType, T value) {
+        EntityDataType<?> resolvedType = type(rawDataType);
+        if (resolvedType.equals(type)) {
+            return value;
+        }
+        if (EntityDataTypes.OPTIONAL_ADV_COMPONENT.equals(type)
+                && EntityDataTypes.STRING.equals(resolvedType)) {
+            Optional<?> optional = (Optional<?>) value;
+            if (optional.isEmpty()) {
+                return "";
+            }
+            Object component = optional.get();
+            if (!(component instanceof Component adventureComponent)) {
+                throw new IllegalArgumentException(
+                        "Metadata field '" + fieldName + "' requires Optional<Component>"
+                );
+            }
+            return new LegacyComponent(adventureComponent).getLegacy();
+        }
+        throw new IllegalArgumentException(
+                "Metadata field '" + fieldName + "' cannot encode " + type + " as " + resolvedType
+        );
     }
 
     @Override

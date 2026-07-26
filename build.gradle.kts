@@ -8,7 +8,14 @@ val integrationPlugin = sourceSets.create("integrationPlugin") {
     compileClasspath += sourceSets.main.get().output
     runtimeClasspath += output + compileClasspath
 }
+val legacyIntegrationPlugin = sourceSets.create("legacyIntegrationPlugin") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += output + compileClasspath
+}
 configurations.named(integrationPlugin.compileClasspathConfigurationName) {
+    attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
+}
+configurations.named(legacyIntegrationPlugin.compileClasspathConfigurationName) {
     attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
 }
 
@@ -39,6 +46,8 @@ dependencies {
     add(codegen.implementationConfigurationName, "com.google.code.gson:gson:2.13.1")
     add(integrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     add(integrationPlugin.compileOnlyConfigurationName, "com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
+    add(legacyIntegrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    add(legacyIntegrationPlugin.compileOnlyConfigurationName, "com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
 }
 
 java {
@@ -55,6 +64,10 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.named<JavaCompile>(integrationPlugin.compileJavaTaskName) {
     options.release = 21
+}
+
+tasks.named<JavaCompile>(legacyIntegrationPlugin.compileJavaTaskName) {
+    options.release = 17
 }
 
 tasks.test {
@@ -98,6 +111,11 @@ tasks.named<ProcessResources>(integrationPlugin.processResourcesTaskName) {
         expand("version" to integrationPluginVersion)
     }
 }
+tasks.named<ProcessResources>(legacyIntegrationPlugin.processResourcesTaskName) {
+    filesMatching("plugin.yml") {
+        expand("version" to integrationPluginVersion)
+    }
+}
 
 tasks.register<Jar>("integrationPluginJar") {
     group = "verification"
@@ -109,11 +127,28 @@ tasks.register<Jar>("integrationPluginJar") {
     from(integrationPlugin.output)
 }
 
+tasks.register<Jar>("legacyIntegrationPluginJar") {
+    group = "verification"
+    description = "Builds the Java 17 plugin used by legacy Paper and Mineflayer tests."
+    archiveBaseName = "VirtualEntitiesLegacyIntegration"
+    archiveVersion = ""
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.get().output)
+    from(legacyIntegrationPlugin.output)
+}
+
 tasks.register<Exec>("mineflayerE2e") {
     group = "verification"
     description = "Runs the Paper and Mineflayer black-box entity test."
     dependsOn("integrationPluginJar")
     commandLine("./integration/mineflayer/run-e2e.sh")
+}
+
+tasks.register<Exec>("legacyMineflayerE2e") {
+    group = "verification"
+    description = "Runs Java 17 legacy Paper and Mineflayer compatibility tests."
+    dependsOn("legacyIntegrationPluginJar")
+    commandLine("./integration/mineflayer/run-legacy-e2e.sh")
 }
 
 publishing {
