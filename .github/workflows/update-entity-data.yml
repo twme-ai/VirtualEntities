@@ -1,0 +1,29 @@
+name: Update entity data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync and validate entity-data
+        run: ./tools/sync-entity-data.sh
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/entity-data
+          delete-branch: true
+          commit-message: "chore(data): update entity metadata"
+          title: "chore(data): update entity metadata"
+          body: |
+            Automated update from [kennytv entity-data](https://kennytv.eu/entity-data/).
+
+            The sync script validates the version index and every entity field before committing.
+          labels: dependencies
