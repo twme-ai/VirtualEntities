@@ -3,8 +3,10 @@ package io.github.twme.virtualentities;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.attribute.Attribute;
+import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.player.GameMode;
@@ -16,6 +18,7 @@ import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityHeadLook;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
@@ -45,6 +48,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** A client-side entity whose lifecycle is represented entirely by PacketEvents packets. */
 public final class VirtualEntity {
@@ -174,8 +178,8 @@ public final class VirtualEntity {
         playerProfile = copyProfile(replacement);
         if (spawned) {
             for (VirtualViewer viewer : viewers.values()) {
-                viewer.send(new WrapperPlayServerDestroyEntities(entityId));
-                viewer.send(playerInfoRemovePacket());
+                manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
+                manager.send(viewer, playerInfoRemovePacket());
                 sendSpawn(viewer);
             }
         }
@@ -424,9 +428,9 @@ public final class VirtualEntity {
     public synchronized VirtualEntity removeViewer(UUID viewerId) {
         VirtualViewer viewer = viewers.remove(Objects.requireNonNull(viewerId, "viewerId"));
         if (viewer != null && spawned) {
-            viewer.send(new WrapperPlayServerDestroyEntities(entityId));
+            manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
             if (playerProfile != null) {
-                viewer.send(playerInfoRemovePacket());
+                manager.send(viewer, playerInfoRemovePacket());
             }
         }
         return this;
@@ -457,7 +461,7 @@ public final class VirtualEntity {
     public synchronized VirtualEntity teleport(Location location) {
         ensureSpawned();
         this.location = copy(Objects.requireNonNull(location, "location"));
-        broadcast(new WrapperPlayServerEntityTeleport(entityId, this.location, onGround));
+        broadcast(this::teleportPacket);
         return this;
     }
 
@@ -580,37 +584,43 @@ public final class VirtualEntity {
 
     private void sendSpawn(VirtualViewer viewer) {
         if (playerProfile != null) {
-            viewer.send(playerInfoAddPacket());
+            manager.send(viewer, playerInfoAddPacket());
         }
         boolean metadataIncludedInSpawn = playerProfile != null && legacyPlayerSpawn();
         if (metadataIncludedInSpawn) {
-            viewer.send(new WrapperPlayServerSpawnPlayer(
+            manager.send(viewer, new WrapperPlayServerSpawnPlayer(
                     entityId,
                     uuid,
                     location,
                     metadata == null ? List.of() : metadata.entityData()
             ));
         } else {
-            viewer.send(new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity));
+            manager.send(
+                    viewer,
+                    new WrapperPlayServerSpawnEntity(entityId, uuid, type, location, headYaw, objectData, velocity)
+            );
         }
         if (!metadataIncludedInSpawn && metadata != null && !metadata.entityData().isEmpty()) {
-            viewer.send(new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
+            manager.send(viewer, new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
         }
         if (playerProfile != null) {
-            viewer.send(new WrapperPlayServerEntityRotation(entityId, location.getYaw(), location.getPitch(), onGround));
-            viewer.send(new WrapperPlayServerEntityHeadLook(entityId, headYaw));
+            manager.send(
+                    viewer,
+                    new WrapperPlayServerEntityRotation(entityId, location.getYaw(), location.getPitch(), onGround)
+            );
+            manager.send(viewer, new WrapperPlayServerEntityHeadLook(entityId, headYaw));
             if (!listed && !modernPlayerInfo()) {
-                viewer.send(playerInfoRemovePacket());
+                manager.send(viewer, playerInfoRemovePacket());
             }
         }
         for (Map.Entry<EquipmentSlot, ItemStack> entry : equipment.entrySet()) {
-            viewer.send(equipmentPacket(entry.getKey(), entry.getValue()));
+            manager.send(viewer, equipmentPacket(entry.getKey(), entry.getValue()));
         }
         if (!attributes.isEmpty()) {
-            viewer.send(new WrapperPlayServerUpdateAttributes(entityId, List.copyOf(attributes.values())));
+            manager.send(viewer, new WrapperPlayServerUpdateAttributes(entityId, List.copyOf(attributes.values())));
         }
         if (!passengers.isEmpty()) {
-            viewer.send(passengersPacket());
+            manager.send(viewer, passengersPacket());
         }
     }
 
@@ -693,6 +703,17 @@ public final class VirtualEntity {
         );
     }
 
+    private PacketWrapper<?> teleportPacket(VirtualViewer viewer) {
+        if (viewer.clientVersion().isNewerThanOrEquals(ClientVersion.V_1_21_2)) {
+            return new WrapperPlayServerEntityPositionSync(
+                    entityId,
+                    new EntityPositionData(location.getPosition(), velocity, location.getYaw(), location.getPitch()),
+                    onGround
+            );
+        }
+        return new WrapperPlayServerEntityTeleport(entityId, location, onGround);
+    }
+
     private void syncPassengersIfSpawned() {
         if (spawned) {
             broadcast(passengersPacket());
@@ -720,7 +741,11 @@ public final class VirtualEntity {
     }
 
     private void broadcast(PacketWrapper<?> packet) {
-        viewers.values().forEach(viewer -> viewer.send(packet));
+        viewers.values().forEach(viewer -> manager.send(viewer, packet));
+    }
+
+    private void broadcast(Function<VirtualViewer, PacketWrapper<?>> packetFactory) {
+        viewers.values().forEach(viewer -> manager.send(viewer, packetFactory.apply(viewer)));
     }
 
     void dispatchInteraction(VirtualEntityInteraction interaction) {

@@ -6,6 +6,7 @@ import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
+import com.github.retrooper.packetevents.util.Vector3f;
 import io.github.twme.virtualentities.PacketEventsTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -107,6 +108,51 @@ class EntityMetadataRegistryTest {
                 EntityDataTypes.TYPED_CAT_VARIANT,
                 GeneratedEntityMetadataKeys.Cat.VARIANT.type("Holder<CatVariant>")
         );
+    }
+
+    @Test
+    void readsOnlyExplicitFixedAndVersionedMetadataValuesByFieldName() {
+        VirtualMetadata metadata = new VirtualMetadata(registry.schema("1.21.11", "Pig"));
+        MetadataKey<Boolean> fixed = MetadataKey.of("CUSTOM_NAME_VISIBLE", EntityDataTypes.BOOLEAN);
+        MetadataKey<Boolean> sameField = MetadataKey.of("CUSTOM_NAME_VISIBLE", EntityDataTypes.BOOLEAN);
+
+        assertTrue(metadata.get(fixed).isEmpty());
+        assertTrue(!metadata.contains(fixed));
+        metadata.set(fixed, true);
+        assertEquals(true, metadata.get(sameField).orElseThrow());
+        assertTrue(metadata.contains(sameField));
+        metadata.set(sameField, false);
+        assertEquals(false, metadata.get(fixed).orElseThrow());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> metadata.get(MetadataKey.of("CUSTOM_NAME_VISIBLE", EntityDataTypes.INT))
+        );
+        metadata.remove(fixed);
+        assertTrue(metadata.get(sameField).isEmpty());
+        assertTrue(!metadata.contains(sameField));
+
+        metadata.set(GeneratedEntityMetadataKeys.Pig.BOOST_TIME, 12);
+        assertEquals(12, metadata.get(GeneratedEntityMetadataKeys.Pig.BOOST_TIME).orElseThrow());
+        metadata.remove(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
+        assertTrue(metadata.get(GeneratedEntityMetadataKeys.Pig.BOOST_TIME).isEmpty());
+    }
+
+    @Test
+    void resolvesTextDisplayMetadataAtOldestAndLatestBundledVersions() {
+        EntityMetadataSchema oldest = registry.schema("1.19.4", EntityTypes.TEXT_DISPLAY);
+        EntityMetadataSchema latest = registry.schema("26.2", EntityTypes.TEXT_DISPLAY);
+
+        assertEquals("Text Display", oldest.entityName());
+        assertEquals(10, oldest.require("TRANSLATION").index());
+        assertEquals(22, oldest.require("TEXT").index());
+        assertEquals(11, latest.require("TRANSLATION").index());
+        assertEquals(23, latest.require("TEXT").index());
+
+        Vector3f translation = new Vector3f(1, 2, 3);
+        VirtualMetadata metadata = new VirtualMetadata(oldest);
+        metadata.set(GeneratedEntityMetadataKeys.Display.TRANSLATION, translation);
+        assertEquals(translation, metadata.get(GeneratedEntityMetadataKeys.Display.TRANSLATION).orElseThrow());
+        assertSame(EntityDataTypes.VECTOR3F, metadata.entityData().get(0).getType());
     }
 
     private static EntityType entityType(String name, EntityType parent) {

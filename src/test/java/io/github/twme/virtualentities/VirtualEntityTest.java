@@ -17,7 +17,7 @@ import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
-import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
@@ -84,7 +84,7 @@ class VirtualEntityTest {
         assertInstanceOf(WrapperPlayServerSpawnEntity.class, packets.get(0));
 
         entity.teleport(new Location(4, 5, 6, 30, 40));
-        assertInstanceOf(WrapperPlayServerEntityTeleport.class, packets.get(1));
+        assertInstanceOf(WrapperPlayServerEntityPositionSync.class, packets.get(1));
         assertEquals(4, entity.location().getX());
 
         entity.removeViewer(viewer.id());
@@ -353,7 +353,7 @@ class VirtualEntityTest {
         assertInstanceOf(WrapperPlayServerEntityRotation.class, packets.get(2));
 
         entity.updateLocation(new Location(10, 65, -2, 45, 5), true);
-        assertInstanceOf(WrapperPlayServerEntityTeleport.class, packets.get(3));
+        assertInstanceOf(WrapperPlayServerEntityPositionSync.class, packets.get(3));
         assertEquals(10, entity.location().getX());
 
         assertThrows(IllegalArgumentException.class, () -> entity.move(8, 0, 0, true));

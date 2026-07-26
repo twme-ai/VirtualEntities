@@ -22,13 +22,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 /** Paper test fixture exercised by the Mineflayer black-box client. */
 public final class VirtualEntitiesIntegrationPlugin extends JavaPlugin {
-    private final Map<UUID, VirtualEntity> testEntities = new LinkedHashMap<>();
+    private static final float ROOT_SCALE = 0.0001f;
+
+    private final Map<UUID, List<VirtualEntity>> testEntities = new LinkedHashMap<>();
     private VirtualEntityManager entities;
     private PacketListenerAbstract packetListener;
 
@@ -66,9 +69,9 @@ public final class VirtualEntitiesIntegrationPlugin extends JavaPlugin {
         if (!(sender instanceof Player player)) {
             return true;
         }
-        VirtualEntity previous = testEntities.remove(player.getUniqueId());
+        List<VirtualEntity> previous = testEntities.remove(player.getUniqueId());
         if (previous != null) {
-            previous.remove();
+            previous.forEach(VirtualEntity::remove);
         }
 
         User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
@@ -87,12 +90,63 @@ public final class VirtualEntitiesIntegrationPlugin extends JavaPlugin {
             }
         });
         pig.addViewer(user).spawn(spawn);
-        testEntities.put(player.getUniqueId(), pig);
-        player.sendMessage("VE_READY:" + pig.entityId());
+
+        Location anchorLocation = new Location(origin.getX() + 4, origin.getY(), origin.getZ(), 0, 0);
+        VirtualEntity root = entities.entity(EntityTypes.TEXT_DISPLAY)
+                .metadata()
+                .build();
+        root.metadata()
+                .set(GeneratedEntityMetadataKeys.TextDisplay.TEXT, Component.empty())
+                .set(GeneratedEntityMetadataKeys.Display.SCALE, new com.github.retrooper.packetevents.util.Vector3f(
+                        ROOT_SCALE,
+                        ROOT_SCALE,
+                        ROOT_SCALE
+                ))
+                .set(EntityMetadataKeys.NO_GRAVITY, true);
+        root.addViewer(user).spawn(anchorLocation);
+
+        VirtualEntity child = entities.entity(EntityTypes.TEXT_DISPLAY)
+                .metadata()
+                .build();
+        child.metadata()
+                .set(GeneratedEntityMetadataKeys.TextDisplay.TEXT, Component.text("VE_TEST_TEXT"))
+                .set(GeneratedEntityMetadataKeys.TextDisplay.LINE_WIDTH, 200)
+                .set(GeneratedEntityMetadataKeys.Display.TRANSLATION,
+                        new com.github.retrooper.packetevents.util.Vector3f(2, 1, 0))
+                .set(EntityMetadataKeys.NO_GRAVITY, true);
+        child.addViewer(user).spawn(anchorLocation);
+        root.addPassenger(child);
+
+        testEntities.put(player.getUniqueId(), List.of(pig, child, root));
+        player.sendMessage("VE_READY:" + pig.entityId() + ":" + root.entityId() + ":" + child.entityId());
 
         getServer().getScheduler().runTaskLater(this, () -> {
-            if (!pig.isRemoved() && pig.isSpawned()) {
+            if (!pig.isRemoved() && pig.isSpawned()
+                    && !root.isRemoved() && root.isSpawned()
+                    && !child.isRemoved() && child.isSpawned()) {
+                entities.bundle(() -> {
+                    com.github.retrooper.packetevents.util.Vector3f translation = child.metadata()
+                            .get(GeneratedEntityMetadataKeys.Display.TRANSLATION)
+                            .orElseThrow();
+                    child.metadata().set(
+                            GeneratedEntityMetadataKeys.Display.TRANSLATION,
+                            new com.github.retrooper.packetevents.util.Vector3f(
+                                    translation.getX() - 1,
+                                    translation.getY(),
+                                    translation.getZ()
+                            )
+                    );
+                    child.syncMetadata();
+                    root.teleport(new Location(
+                            anchorLocation.getX() + 1,
+                            anchorLocation.getY(),
+                            anchorLocation.getZ(),
+                            0,
+                            0
+                    ));
+                });
                 pig.move(1, 0, 0, true);
+                player.sendMessage("VE_RELOCATED");
                 player.sendMessage("VE_MOVED");
             }
         }, 20L);

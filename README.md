@@ -4,7 +4,7 @@
 [![JitPack](https://jitpack.io/v/twme-ai/VirtualEntities.svg)](https://jitpack.io/#twme-ai/VirtualEntities)
 [![License](https://img.shields.io/github/license/twme-ai/VirtualEntities)](LICENSE)
 
-VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, viewer lifecycle management, relative and absolute movement, generated version-aware metadata keys, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
+VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, viewer lifecycle management, relative and absolute movement, readable generated metadata, atomic multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
 
 Metadata indexes are resolved from data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/). The dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
 
@@ -79,11 +79,42 @@ pig.remove();
 
 Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. Use `MetadataKey.of` for custom fields. Glowing is one bit within `SHARED_FLAGS`, not an independent protocol field, so callers should use a small bitmask helper when changing that flag.
 
+`VirtualMetadata#get` and `contains` inspect only values explicitly assigned with `set`. They resolve keys by field name, remain type-safe for fixed and generated versioned keys, and never parse the textual defaults from entity-data. Removing a key makes it absent again:
+
+```java
+Optional<Integer> boostTime = pig.metadata().get(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
+boolean explicitlySet = pig.metadata().contains(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
+pig.metadata().remove(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
+```
+
 The default `metadata()` builder resolves both the current PacketEvents server version and the entity-data name. When kennytv has no exact release document, VirtualEntities selects the newest bundled numeric snapshot at or before that release. PacketEvents entity aliases and parent types are resolved automatically. The explicit `metadata(version, entityDataName)` overload remains available for custom mappings.
 
 Field names are resolved through the selected entity's complete inheritance chain. An unsupported version, entity name, or field fails immediately instead of sending a packet with a guessed index.
 
 Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
+
+### Atomic multi-entity updates
+
+Use `VirtualEntityManager#bundle` when several visible entity changes must be applied by each client as one update. Packets are collected independently for each viewer, retain operation order, and include only entities visible to that viewer:
+
+```java
+Vector3f previous = child.metadata()
+        .get(GeneratedEntityMetadataKeys.Display.TRANSLATION)
+        .orElseThrow();
+
+entities.bundle(() -> {
+    child.metadata().set(
+            GeneratedEntityMetadataKeys.Display.TRANSLATION,
+            new Vector3f(previous.getX() - deltaX, previous.getY() - deltaY, previous.getZ() - deltaZ)
+    );
+    child.syncMetadata();
+    rootAnchor.teleport(newOrigin);
+});
+```
+
+Each affected 1.19.4 or newer viewer receives exactly one opening and closing bundle delimiter. Older clients receive the same packets unbundled and in order. Nested calls on the same thread join the outer scope; operations on other threads are not captured. Entity state changes immediately, so viewers added later receive the final snapshot.
+
+Bundles do not roll back state. If the callback throws, packets queued before the failure are flushed and the original exception is rethrown. Transport failures do not prevent the manager from attempting the remaining affected viewers. The first transport failure is thrown after flushing; if the callback also failed, it is attached to the callback failure as a suppressed exception.
 
 ### Virtual players
 
@@ -129,7 +160,7 @@ VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> 
 });
 ```
 
-For custom transports and tests, use `VirtualViewer.of(UUID, Consumer<PacketWrapper<?>>)` instead of a PacketEvents `User`.
+For custom transports and tests, use `VirtualViewer.of(UUID, Consumer<PacketWrapper<?>>)` instead of a PacketEvents `User`. It defaults to the server protocol version; use `VirtualViewer.of(UUID, ClientVersion, Consumer<PacketWrapper<?>>)` when the custom transport targets another client version. Viewers created from a PacketEvents `User` automatically use that user's client version for bundle fallback and version-specific teleport packets.
 
 Call `entities.close()` during plugin shutdown. It despawns and unregisters every managed virtual entity.
 
@@ -141,7 +172,7 @@ The normal verification gate runs unit, protocol-boundary, generated-source, and
 ./gradlew clean build
 ```
 
-The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.13.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, and an attack routed back through `handleInteraction`:
+The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.13.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, an attack routed back through `handleInteraction`, and an atomic Text Display translation plus root-anchor relocation bundle:
 
 ```bash
 ./gradlew mineflayerE2e
@@ -169,6 +200,7 @@ The core API is based entirely on PacketEvents and does not register global list
 - [PacketEvents](https://github.com/retrooper/packetevents) by retrooper and contributors provides the cross-version packet and protocol API used by this library.
 - [EntityLib](https://github.com/Tofaa2/EntityLib) by Tofaa2 informed the wrapper entity lifecycle and metadata API direction.
 - [PacketEntities](https://github.com/3add/PacketEntities) by 3add informed the builder, viewer-management, and data-generation design.
+- [TextDisplayShapes](https://github.com/TWME-TW/TextDisplayShapes) provided the renderer use case for readable metadata and atomic multi-entity updates.
 - [kennytv entity-data](https://kennytv.eu/entity-data/) and its [source repository](https://github.com/kennytv/kennytv.eu) provide the decompiled Minecraft metadata layouts bundled by VirtualEntities.
 - [Mineflayer](https://github.com/PrismarineJS/mineflayer) is the recommended black-box client for integration testing entity behavior.
 
