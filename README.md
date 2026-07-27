@@ -7,7 +7,7 @@
 
 VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, protocol-aware viewer lifecycle management, relative, absolute, and externally synchronized movement state, readable generated metadata, atomic metadata flags and multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
 
-Metadata indexes are resolved from reviewed legacy snapshots for Minecraft 1.9.4 through 1.14.1 and data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/) for newer releases. The merged dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes.
+Metadata indexes are resolved from reviewed legacy snapshots for Minecraft 1.9.4 through 1.14.1 and data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/) for newer releases. The merged dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes. The complete audited snapshot list is in [`versions.json`](src/main/resources/entity-data/versions.json); releases without an exact upstream snapshot use the nearest bundled numeric schema at or below the requested release.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ Java and Minecraft compatibility are independent. VirtualEntities is compiled fo
 | Range | Status | Evidence |
 |---|---|---|
 | Minecraft 1.9.4-1.13.2 | Supported on Java 17 | Reviewed metadata snapshots, protocol-boundary tests, and Paper + Mineflayer E2E on 1.9.4, 1.12.2, and 1.13.2 |
-| Minecraft 1.14-current | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, protocol-boundary tests, and the current Paper + Mineflayer E2E |
+| Minecraft 1.14-current bundled snapshots | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, all-snapshot schema/entity mapping verification, and the current Paper + Mineflayer E2E |
 | Minecraft 1.8.8 and older | Not supported | Requires a separate boolean-as-byte metadata codec and pre-1.9 single-passenger attach semantics |
 
 The legacy compatibility layer selects the historical living-entity, player, painting, lightning, and experience-orb spawn packets and preserves the pre-1.15 embedded metadata layout. It also converts the logical `Optional<Component>` custom-name API to the pre-1.13 string serializer while retaining the logical value returned by `VirtualMetadata#get`.
@@ -102,18 +102,17 @@ boolean explicitlySet = pig.metadata().contains(GeneratedEntityMetadataKeys.Pig.
 pig.metadata().remove(GeneratedEntityMetadataKeys.Pig.BOOST_TIME);
 ```
 
-Byte-backed metadata flags can be changed atomically without overwriting neighboring bits. An unassigned field is read as zero; explicitly disabling a flag stores zero. A zero mask or non-byte key is rejected:
+Byte-backed metadata flags can be changed atomically without overwriting neighboring bits. Prefer the reviewed named descriptors for supported semantics; each descriptor binds one flag to its correct byte-backed key. An unassigned field is read as zero; explicitly disabling a flag stores zero. A zero mask, multi-bit semantic descriptor, or non-byte key is rejected:
 
 ```java
-pig.metadata().setFlag(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x40, true);
-boolean glowing = pig.metadata().isFlagSet(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x40);
+pig.metadata().setFlag(EntityMetadataFlags.GLOWING, true);
+boolean glowing = pig.metadata().isFlagSet(EntityMetadataFlags.GLOWING);
 
-textDisplay.metadata().setFlag(
-        GeneratedEntityMetadataKeys.TextDisplay.STYLE_FLAGS,
-        (byte) 0x02,
-        true
-);
+textDisplay.metadata().setFlag(EntityMetadataFlags.TextDisplay.SEE_THROUGH, true);
+boolean seeThrough = textDisplay.metadata().isFlagSet(EntityMetadataFlags.TextDisplay.SEE_THROUGH);
 ```
+
+The reviewed descriptors cover the stable common flags (`ON_FIRE`, `CROUCHING`, `SPRINTING`, `INVISIBLE`, `GLOWING`, and `FALL_FLYING`) and Text Display style flags (`SHADOW`, `SEE_THROUGH`, `DEFAULT_BACKGROUND`, `ALIGN_LEFT`, and `ALIGN_RIGHT`). Their independent evidence and version assertions are maintained in [`data/metadata-flags/`](data/metadata-flags/). The shared `0x10` bit is intentionally not exposed as a global constant because it was unused in older protocols and became swimming in 1.13. Use the existing key-plus-mask overload for a deliberately version-specific or custom bit.
 
 The default `metadata()` builder resolves both the current PacketEvents server version and the entity-data name. When kennytv has no exact release document, VirtualEntities selects the newest bundled numeric snapshot at or before that release. PacketEvents entity aliases and parent types are resolved automatically. The explicit `metadata(version, entityDataName)` overload remains available for custom mappings.
 
@@ -240,12 +239,18 @@ VE_E2E_JAVA=/path/to/java17/bin/java \
 
 Run the same validated sync used by automation:
 
+The sync and semantic-data verifier require Node.js 22 or newer; this is a repository maintenance requirement and does not change the Java 17 runtime requirement of the library.
+
 ```bash
 ./tools/sync-entity-data.sh
+node tools/verify-entity-data.mjs
+./tools/verify-semantic-flag-sources.sh
 ./gradlew test
 ```
 
-The source JSON is retained under `src/main/resources/entity-data` for auditability. Immutable legacy inputs and their pinned Mojang server hashes and Spigot BuildData commits live under `data/legacy-entity-data`. Run `./tools/verify-legacy-entity-data-sources.sh` to revalidate those pins. The sync command merges both data sources and regenerates `GeneratedEntityMetadataKeys`; CI rejects stale generated code or an unmapped upstream data type. Runtime schemas are loaded lazily and cached by Minecraft version.
+The source JSON is retained under `src/main/resources/entity-data` for auditability. Immutable legacy inputs and their pinned Mojang server hashes and Spigot BuildData commits live under `data/legacy-entity-data`. Run `./tools/verify-legacy-entity-data-sources.sh` to revalidate those pins. The sync command merges both data sources, regenerates `GeneratedEntityMetadataKeys`, and verifies every entity inheritance chain plus the reviewed semantic flag manifest. CI rejects stale generated code, an unmapped upstream data type, or a schema that violates the all-snapshot assertions. Runtime schemas are loaded lazily and cached by Minecraft version.
+
+The issue request uses `25.2` as an audit-range label. Mojang's official version manifest has no release identifier named `25.2`; the latest 2025 release identifier is `1.21.11`. The semantic audit therefore checks every bundled snapshot through that range and also checks the later bundled `26.1` and `26.2` snapshots.
 
 ## Scope
 
@@ -258,6 +263,8 @@ The core API is based entirely on PacketEvents and does not register global list
 - [Spigot BuildData](https://hub.spigotmc.org/stash/projects/SPIGOT/repos/builddata) provides version-pinned class and member identities for legacy Mojang server artifacts.
 - [EntityLib](https://github.com/Tofaa2/EntityLib) by Tofaa2 informed the wrapper entity lifecycle and metadata API direction.
 - [PacketEntities](https://github.com/3add/PacketEntities) by 3add informed the builder, viewer-management, and data-generation design.
+- [Minestom](https://github.com/Minestom/Minestom) provided an independent metadata flag implementation used to cross-check the reviewed semantic masks.
+- [Minecraft Wiki entity metadata](https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata) provided protocol documentation used during semantic flag review.
 - [TextDisplayShapes](https://github.com/TWME-TW/TextDisplayShapes) provided the renderer use case for readable metadata and atomic multi-entity updates.
 - [DisplayNameTags](https://github.com/Matt-MX/DisplayNameTags) provided the use cases for metadata flags, external movement snapshots, and old-client entity fallbacks.
 - [kennytv entity-data](https://kennytv.eu/entity-data/) and its [source repository](https://github.com/kennytv/kennytv.eu) provide the decompiled Minecraft metadata layouts bundled by VirtualEntities.

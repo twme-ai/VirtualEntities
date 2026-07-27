@@ -4,6 +4,7 @@ import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.util.Vector3f;
@@ -97,6 +98,13 @@ class EntityMetadataRegistryTest {
                 13,
                 registry.schema("1.13.2", EntityTypes.EVOKER).require("SPELL_CASTING").index()
         );
+
+        // The pre-1.14 Wolf schema contains a second health value in addition
+        // to LivingEntity.  It must keep its distinct protocol name so the
+        // inherited field is not silently overwritten during flattening.
+        EntityMetadataSchema wolf194 = registry.schema("1.9.4", EntityTypes.WOLF);
+        assertEquals(6, wolf194.require("HEALTH").index());
+        assertEquals(13, wolf194.require("WOLF_HEALTH").index());
 
         EntityMetadataSchema villager114 = registry.schema("1.14", EntityTypes.VILLAGER);
         EntityMetadataSchema villager1141 = registry.schema("1.14.1", EntityTypes.VILLAGER);
@@ -200,6 +208,55 @@ class EntityMetadataRegistryTest {
     }
 
     @Test
+    void resolvesEveryPacketEventsEntityTypeAtEveryBundledProtocolSnapshot() {
+        List<String> unresolved = new ArrayList<>();
+        for (String snapshot : registry.versions()) {
+            ClientVersion clientVersion = clientVersionFor(snapshot);
+            if (clientVersion == null) {
+                // 26w14a is a data snapshot without a matching PacketEvents
+                // enum value; the structural verifier still covers it.
+                continue;
+            }
+            for (EntityType type : EntityTypes.values()) {
+                if (type.getId(clientVersion) < 0) {
+                    continue;
+                }
+                try {
+                    registry.schema(snapshot, type);
+                } catch (IllegalArgumentException exception) {
+                    unresolved.add(snapshot + ":" + type.getName().getKey());
+                }
+            }
+        }
+
+        assertEquals(List.of(), unresolved);
+    }
+
+    @Test
+    void resolvesEveryPacketEventsServerReleaseInTheSupportedRange() {
+        List<String> unresolved = new ArrayList<>();
+        for (ServerVersion serverVersion : ServerVersion.values()) {
+            if (serverVersion.getProtocolVersion() < ServerVersion.V_1_9_4.getProtocolVersion()
+                    || serverVersion.getReleaseName().equals("ERROR")) {
+                continue;
+            }
+            ClientVersion clientVersion = serverVersion.toClientVersion();
+            for (EntityType type : EntityTypes.values()) {
+                if (type.getId(clientVersion) < 0) {
+                    continue;
+                }
+                try {
+                    registry.schema(serverVersion.getReleaseName(), type);
+                } catch (IllegalArgumentException exception) {
+                    unresolved.add(serverVersion.getReleaseName() + ":" + type.getName().getKey());
+                }
+            }
+        }
+
+        assertEquals(List.of(), unresolved);
+    }
+
+    @Test
     void generatedKeysUseInheritanceAndVersionedSerializers() {
         VirtualMetadata pig = new VirtualMetadata(registry.schema("1.21.11", "Pig"));
         pig.set(GeneratedEntityMetadataKeys.Pig.SHARED_FLAGS, (byte) 0x40)
@@ -290,5 +347,17 @@ class EntityMetadataRegistryTest {
                 return 0;
             }
         };
+    }
+
+    private static ClientVersion clientVersionFor(String snapshot) {
+        if (snapshot.equals("26w14a")) {
+            return null;
+        }
+        String enumName = "V_" + snapshot.replace('.', '_');
+        try {
+            return ClientVersion.valueOf(enumName);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

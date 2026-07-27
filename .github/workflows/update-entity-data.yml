@@ -18,9 +18,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - uses: gradle/actions/setup-gradle@v6
       - name: Sync and validate entity-data
         run: ./tools/sync-entity-data.sh
+      - name: Verify pinned semantic-flag sources
+        run: ./tools/verify-semantic-flag-sources.sh
       - uses: peter-evans/create-pull-request@v8
         with:
           branch: automation/entity-data

@@ -1,0 +1,220 @@
+{
+  "format": 1,
+  "requestedRange": {
+    "minimum": "1.9.4",
+    "maximum": "25.2",
+    "bundledBeyondRequestedRange": ["26.1", "26.2"],
+    "bundledNonReleaseSnapshots": ["26w14a"],
+    "note": "The official Mojang version manifest has no release identifier named 25.2. The latest 2025 release identifier is 1.21.11; 25.2 is retained here as the requested audit label."
+  },
+  "schemaAssertions": [
+    {
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "dataType": "Byte",
+      "presence": "everySnapshot"
+    },
+    {
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "dataType": "Byte",
+      "presence": "everySnapshotWithEntity",
+      "firstSnapshot": "1.19.4"
+    }
+  ],
+  "flags": [
+    {
+      "id": "entity.on_fire",
+      "constant": "EntityMetadataFlags.ON_FIRE",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 1,
+      "hexMask": "0x01",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "packetentities-shared-flags"]
+    },
+    {
+      "id": "entity.crouching",
+      "constant": "EntityMetadataFlags.CROUCHING",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 2,
+      "hexMask": "0x02",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "minecraft-wiki-entity-metadata"]
+    },
+    {
+      "id": "entity.sprinting",
+      "constant": "EntityMetadataFlags.SPRINTING",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 8,
+      "hexMask": "0x08",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "packetentities-shared-flags"]
+    },
+    {
+      "id": "entity.invisible",
+      "constant": "EntityMetadataFlags.INVISIBLE",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 32,
+      "hexMask": "0x20",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "packetentities-shared-flags"]
+    },
+    {
+      "id": "entity.glowing",
+      "constant": "EntityMetadataFlags.GLOWING",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 64,
+      "hexMask": "0x40",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "packetentities-shared-flags", "entitylib-shared-flags"]
+    },
+    {
+      "id": "entity.fall_flying",
+      "constant": "EntityMetadataFlags.FALL_FLYING",
+      "owner": "Entity",
+      "field": "SHARED_FLAGS",
+      "mask": 128,
+      "hexMask": "0x80",
+      "introduced": "1.9.4",
+      "evidence": ["mojang-1.9.4-server", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "packetentities-shared-flags"]
+    },
+    {
+      "id": "text_display.shadow",
+      "constant": "EntityMetadataFlags.TextDisplay.SHADOW",
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "mask": 1,
+      "hexMask": "0x01",
+      "introduced": "1.19.4",
+      "evidence": ["mojang-1.19.4-server-mappings", "mojang-1.21.5-server-mappings", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "entitylib-text-display"]
+    },
+    {
+      "id": "text_display.see_through",
+      "constant": "EntityMetadataFlags.TextDisplay.SEE_THROUGH",
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "mask": 2,
+      "hexMask": "0x02",
+      "introduced": "1.19.4",
+      "evidence": ["mojang-1.19.4-server-mappings", "mojang-1.21.5-server-mappings", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "entitylib-text-display"]
+    },
+    {
+      "id": "text_display.default_background",
+      "constant": "EntityMetadataFlags.TextDisplay.DEFAULT_BACKGROUND",
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "mask": 4,
+      "hexMask": "0x04",
+      "introduced": "1.19.4",
+      "evidence": ["mojang-1.19.4-server-mappings", "mojang-1.21.5-server-mappings", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def", "entitylib-text-display"]
+    },
+    {
+      "id": "text_display.align_left",
+      "constant": "EntityMetadataFlags.TextDisplay.ALIGN_LEFT",
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "mask": 8,
+      "hexMask": "0x08",
+      "introduced": "1.19.4",
+      "evidence": ["mojang-1.19.4-server-mappings", "mojang-1.21.5-server-mappings", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def"]
+    },
+    {
+      "id": "text_display.align_right",
+      "constant": "EntityMetadataFlags.TextDisplay.ALIGN_RIGHT",
+      "owner": "Text Display",
+      "field": "STYLE_FLAGS",
+      "mask": 16,
+      "hexMask": "0x10",
+      "introduced": "1.19.4",
+      "evidence": ["mojang-1.19.4-server-mappings", "mojang-1.21.5-server-mappings", "mojang-1.21.11-server-mappings", "mojang-26.2-server", "minestom-metadata-def"]
+    }
+  ],
+  "sources": [
+    {
+      "id": "mojang-1.9.4-server",
+      "kind": "Mojang official server artifact",
+      "release": "1.9.4",
+      "sha1": "edbb7b1758af33d365bf835eb9d13de005b1e274",
+      "url": "https://piston-meta.mojang.com/v1/packages/b1a314ce2b67b3639bd6407ddcd549ce236de6f6/1.9.4.json"
+    },
+    {
+      "id": "mojang-1.19.4-server-mappings",
+      "kind": "Mojang official server artifact and mappings",
+      "release": "1.19.4",
+      "serverSha1": "8f3112a1049751cc472ec13e397eade5336ca7ae",
+      "mappingsSha1": "73c8bb982e420b33aad9632b482608c5c33e2d13",
+      "url": "https://piston-meta.mojang.com/v1/packages/b2a4a55527f44f5b9f807675e795591ddfa5063a/1.19.4.json"
+    },
+    {
+      "id": "mojang-1.14.4-server-mappings",
+      "kind": "Mojang official server artifact and mappings",
+      "release": "1.14.4",
+      "serverSha1": "3dc3d84a581f14691199cf6831b71ed1296a9fdf",
+      "mappingsSha1": "c604a623b416a88a844979a6c55862c8a97510a9",
+      "url": "https://piston-meta.mojang.com/v1/packages/be146d5f66a3627ed0a87c234c4d8dde8ab35098/1.14.4.json"
+    },
+    {
+      "id": "mojang-1.21.5-server-mappings",
+      "kind": "Mojang official server artifact and mappings",
+      "release": "1.21.5",
+      "serverSha1": "e6ec2f64e6080b9b5d9b471b291c33cc7f509733",
+      "mappingsSha1": "f4812c1d66d0098a94616b19c21829e591d0af3a",
+      "url": "https://piston-meta.mojang.com/v1/packages/e0ab7e984fc1d951e2264da9234f6554662154bb/1.21.5.json"
+    },
+    {
+      "id": "mojang-26.2-server",
+      "kind": "Mojang official named server artifact",
+      "release": "26.2",
+      "serverSha1": "823e2250d24b3ddac457a60c92a6a941943fcd6a",
+      "url": "https://piston-meta.mojang.com/v1/packages/d98675ecc24364e90b18dbea80390b1345c3f71f/26.2.json"
+    },
+    {
+      "id": "mojang-1.21.11-server-mappings",
+      "kind": "Mojang official server artifact and mappings",
+      "release": "1.21.11",
+      "serverSha1": "64bb6d763bed0a9f1d632ec347938594144943ed",
+      "mappingsSha1": "5621e9253f05fd57872bbe7f8ddf5f9a7d525955",
+      "url": "https://piston-meta.mojang.com/v1/packages/fb498c3c1beff5c406e71b776d8457499670cb3f/1.21.11.json"
+    },
+    {
+      "id": "minestom-metadata-def",
+      "kind": "Independent server implementation cross-check",
+      "commit": "1a0758052fa52e172aa19f42cfa37a7980015312",
+      "url": "https://github.com/Minestom/Minestom/blob/1a0758052fa52e172aa19f42cfa37a7980015312/src/main/java/net/minestom/server/entity/MetadataDef.java"
+    },
+    {
+      "id": "packetentities-shared-flags",
+      "kind": "Independent protocol implementation cross-check",
+      "commit": "bef2f1478ff2aa9b18c360c5793045f4e8d88e87",
+      "url": "https://github.com/3add/PacketEntities/blob/bef2f1478ff2aa9b18c360c5793045f4e8d88e87/src/main/java/dev/threeadd/packetentities/entity/meta/protocol/view/bitmask/type/EntitySharedFlagsView.java"
+    },
+    {
+      "id": "entitylib-shared-flags",
+      "kind": "Independent metadata wrapper cross-check",
+      "commit": "9ab4d190869815cd13260791db94b7a3d2fdf9c1",
+      "url": "https://github.com/Tofaa2/EntityLib/blob/9ab4d190869815cd13260791db94b7a3d2fdf9c1/api/src/main/java/me/tofaa/entitylib/meta/EntityMeta.java"
+    },
+    {
+      "id": "entitylib-text-display",
+      "kind": "Independent metadata wrapper cross-check",
+      "commit": "9ab4d190869815cd13260791db94b7a3d2fdf9c1",
+      "url": "https://github.com/Tofaa2/EntityLib/blob/9ab4d190869815cd13260791db94b7a3d2fdf9c1/api/src/main/java/me/tofaa/entitylib/meta/display/TextDisplayMeta.java"
+    },
+    {
+      "id": "minecraft-wiki-entity-metadata",
+      "kind": "Protocol documentation cross-check",
+      "url": "https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata"
+    },
+    {
+      "id": "viaversion-swimming-transition",
+      "kind": "Protocol transition evidence for the deliberately excluded shared bit",
+      "commit": "122b81dd33cd9c78f2a3bf931a1095cd6b5c4cd",
+      "url": "https://github.com/ViaVersion/ViaVersion/blob/122b81dd33cd9c78f2a3bf931a1095cd6b5c4cd/common/src/main/java/com/viaversion/viaversion/protocols/v1_12_2to1_13/rewriter/EntityPacketRewriter1_13.java"
+    }
+  ]
+}

@@ -1410,7 +1410,7 @@
       {
         "index": 17,
         "dataType": "Float",
-        "fieldName": "HEALTH",
+        "fieldName": "WOLF_HEALTH",
         "defaultValue": "this.getHealth()"
       },
       {

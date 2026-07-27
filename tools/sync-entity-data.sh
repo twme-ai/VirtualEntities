@@ -45,5 +45,8 @@ find "${OUTPUT_DIR}" -maxdepth 1 -type f -name '*.json' -delete
 install -m 0644 "${MERGED_DIR}"/*.json "${OUTPUT_DIR}/"
 
 "${PROJECT_DIR}/gradlew" --quiet --project-dir "${PROJECT_DIR}" generateMetadataKeys
+node "${PROJECT_DIR}/tools/verify-entity-data.mjs" \
+  "${OUTPUT_DIR}" \
+  "${PROJECT_DIR}/data/metadata-flags/semantic-flags.json"
 
 echo "Synced and merged $(jq 'length' "${OUTPUT_DIR}/versions.json") entity-data versions."

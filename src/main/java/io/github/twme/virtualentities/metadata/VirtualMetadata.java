@@ -87,6 +87,18 @@ public final class VirtualMetadata {
     }
 
     /**
+     * Atomically enables or disables a reviewed semantic flag.
+     *
+     * @param flag the key-bound semantic flag
+     * @param enabled whether the flag should be enabled
+     * @return this metadata container
+     */
+    public synchronized VirtualMetadata setFlag(MetadataFlag flag, boolean enabled) {
+        Objects.requireNonNull(flag, "flag");
+        return setFlag(flag.key(), flag.mask(), enabled);
+    }
+
+    /**
      * Returns whether every bit in {@code mask} is enabled, treating an unassigned field as zero.
      *
      * @param key a byte-backed metadata key
@@ -97,6 +109,17 @@ public final class VirtualMetadata {
         ResolvedByteKey resolved = resolveByteKey(key, mask);
         int maskBits = Byte.toUnsignedInt(mask);
         return (Byte.toUnsignedInt(explicitByteValue(resolved)) & maskBits) == maskBits;
+    }
+
+    /**
+     * Returns whether every bit in a reviewed semantic flag is enabled.
+     *
+     * @param flag the key-bound semantic flag
+     * @return whether the flag is enabled
+     */
+    public synchronized boolean isFlagSet(MetadataFlag flag) {
+        Objects.requireNonNull(flag, "flag");
+        return isFlagSet(flag.key(), flag.mask());
     }
 
     public synchronized VirtualMetadata remove(MetadataKey<?> key) {
@@ -119,6 +142,11 @@ public final class VirtualMetadata {
             throw new IllegalArgumentException("Metadata flag mask cannot be zero");
         }
         MetadataField field = schema.require(key.fieldName());
+        if (!"Byte".equals(field.dataType())) {
+            throw new IllegalArgumentException(
+                    "Metadata field '" + key.fieldName() + "' is not byte-backed in schema " + schema.version()
+            );
+        }
         EntityDataType<?> resolvedType = key.type(field.dataType());
         if (!EntityDataTypes.BYTE.equals(resolvedType)) {
             throw new IllegalArgumentException(

@@ -74,6 +74,87 @@ class VirtualMetadataTest {
         assertThrows(IllegalArgumentException.class, () -> metadata.setFlag(asByteKey(
                 MetadataKey.of("AIR_SUPPLY", EntityDataTypes.INT)
         ), (byte) 0x01, true));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new MetadataFlag(EntityMetadataKeys.SHARED_FLAGS, (byte) 0)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new MetadataFlag(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x03)
+        );
+        MetadataFlag mismatchedField = new MetadataFlag(
+                MetadataKey.of("AIR_SUPPLY", EntityDataTypes.BYTE),
+                (byte) 0x01
+        );
+        assertThrows(IllegalArgumentException.class, () -> metadata.setFlag(mismatchedField, true));
+        assertThrows(IllegalArgumentException.class, () -> metadata.isFlagSet(mismatchedField));
+    }
+
+    @Test
+    void namedFlagsBindTheirSemanticKeysAndPreserveUnknownBits() {
+        assertEquals("SHARED_FLAGS", EntityMetadataFlags.ON_FIRE.key().fieldName());
+        assertEquals((byte) 0x01, EntityMetadataFlags.ON_FIRE.mask());
+        assertEquals("SHARED_FLAGS", EntityMetadataFlags.CROUCHING.key().fieldName());
+        assertEquals((byte) 0x02, EntityMetadataFlags.CROUCHING.mask());
+        assertEquals((byte) 0x08, EntityMetadataFlags.SPRINTING.mask());
+        assertEquals((byte) 0x20, EntityMetadataFlags.INVISIBLE.mask());
+        assertEquals((byte) 0x40, EntityMetadataFlags.GLOWING.mask());
+        assertEquals((byte) 0x80, EntityMetadataFlags.FALL_FLYING.mask());
+
+        VirtualMetadata pig = new VirtualMetadata(registry.schema("1.9.4", "Pig"));
+        pig.set(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x81);
+
+        pig.setFlag(EntityMetadataFlags.GLOWING, true)
+                .setFlag(EntityMetadataFlags.ON_FIRE, false)
+                .setFlag(EntityMetadataFlags.CROUCHING, true);
+
+        assertEquals((byte) 0xC2, pig.get(EntityMetadataKeys.SHARED_FLAGS).orElseThrow());
+        assertTrue(pig.isFlagSet(EntityMetadataFlags.GLOWING));
+        assertTrue(pig.isFlagSet(EntityMetadataFlags.CROUCHING));
+        assertFalse(pig.isFlagSet(EntityMetadataFlags.ON_FIRE));
+
+        VirtualMetadata textDisplay = new VirtualMetadata(
+                registry.schema("1.19.4", "Text Display")
+        );
+        textDisplay.setFlag(EntityMetadataFlags.TextDisplay.SHADOW, true)
+                .setFlag(EntityMetadataFlags.TextDisplay.SEE_THROUGH, true)
+                .setFlag(EntityMetadataFlags.TextDisplay.DEFAULT_BACKGROUND, true);
+
+        MetadataKey<Byte> styleFlags = GeneratedEntityMetadataKeys.TextDisplay.STYLE_FLAGS;
+        assertEquals("STYLE_FLAGS", EntityMetadataFlags.TextDisplay.SHADOW.key().fieldName());
+        assertEquals((byte) 0x01, EntityMetadataFlags.TextDisplay.SHADOW.mask());
+        assertEquals((byte) 0x02, EntityMetadataFlags.TextDisplay.SEE_THROUGH.mask());
+        assertEquals((byte) 0x04, EntityMetadataFlags.TextDisplay.DEFAULT_BACKGROUND.mask());
+        assertEquals((byte) 0x08, EntityMetadataFlags.TextDisplay.ALIGN_LEFT.mask());
+        assertEquals((byte) 0x10, EntityMetadataFlags.TextDisplay.ALIGN_RIGHT.mask());
+        assertEquals((byte) 0x07, textDisplay.get(styleFlags).orElseThrow());
+        assertTrue(textDisplay.isFlagSet(EntityMetadataFlags.TextDisplay.SHADOW));
+        assertTrue(textDisplay.isFlagSet(EntityMetadataFlags.TextDisplay.SEE_THROUGH));
+        assertTrue(textDisplay.isFlagSet(EntityMetadataFlags.TextDisplay.DEFAULT_BACKGROUND));
+    }
+
+    @Test
+    void namedDescriptorMatchesTheRawOverloadWithoutImplicitSynchronization() {
+        VirtualMetadata named = new VirtualMetadata(registry.schema("1.21.5", "Pig"));
+        VirtualMetadata raw = new VirtualMetadata(registry.schema("1.21.5", "Pig"));
+
+        named.setFlag(EntityMetadataFlags.GLOWING, true);
+        raw.setFlag(EntityMetadataKeys.SHARED_FLAGS, (byte) 0x40, true);
+
+        assertEquals(
+                raw.get(EntityMetadataKeys.SHARED_FLAGS),
+                named.get(EntityMetadataKeys.SHARED_FLAGS)
+        );
+        assertEquals(1, named.entityData().size());
+        assertEquals(1, raw.entityData().size());
+        assertEquals(raw.entityData().get(0).getIndex(), named.entityData().get(0).getIndex());
+        assertEquals(raw.entityData().get(0).getType(), named.entityData().get(0).getType());
+        assertEquals(raw.entityData().get(0).getValue(), named.entityData().get(0).getValue());
+
+        VirtualMetadata explicitlyDisabled = new VirtualMetadata(registry.schema("1.9.4", "Pig"));
+        explicitlyDisabled.setFlag(EntityMetadataFlags.GLOWING, false);
+        assertTrue(explicitlyDisabled.contains(EntityMetadataKeys.SHARED_FLAGS));
+        assertEquals((byte) 0, explicitlyDisabled.get(EntityMetadataKeys.SHARED_FLAGS).orElseThrow());
     }
 
     @Test

@@ -101,8 +101,20 @@ val verifyGeneratedMetadataKeys = tasks.register<JavaExec>("verifyGeneratedMetad
     )
 }
 
+val verifyEntityData = tasks.register<Exec>("verifyEntityData") {
+    group = "verification"
+    description = "Validates every bundled entity-data snapshot and reviewed semantic flag manifest."
+    commandLine(
+        "node",
+        layout.projectDirectory.file("tools/verify-entity-data.mjs").asFile.absolutePath,
+        layout.projectDirectory.dir("src/main/resources/entity-data").asFile.absolutePath,
+        layout.projectDirectory.file("data/metadata-flags/semantic-flags.json").asFile.absolutePath
+    )
+}
+
 tasks.check {
     dependsOn(verifyGeneratedMetadataKeys)
+    dependsOn(verifyEntityData)
 }
 
 val integrationPluginVersion = version.toString()

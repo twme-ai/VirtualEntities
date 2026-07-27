@@ -1002,7 +1002,7 @@
       {
         "index": 14,
         "dataType": "Float",
-        "fieldName": "HEALTH"
+        "fieldName": "WOLF_HEALTH"
       },
       {
         "index": 15,

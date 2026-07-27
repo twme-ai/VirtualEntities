@@ -16,6 +16,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew build
       - uses: softprops/action-gh-release@v3

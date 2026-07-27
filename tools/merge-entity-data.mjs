@@ -128,7 +128,7 @@ const fieldAliases = new Map(Object.entries({
   Pig: { SADDLED: 'SADDLE' },
   Sheep: { DYE_COLOR: 'WOOL' },
   'Tamable Animal': { TAMED: 'FLAGS' },
-  Wolf: { BEGGING: 'INTERESTED' },
+  Wolf: { HEALTH: 'WOLF_HEALTH', BEGGING: 'INTERESTED' },
   Llama: { COLOR: 'SWAG' },
   'Spellcaster Illager': { SPELL: 'SPELL_CASTING' }
 }))
@@ -203,7 +203,9 @@ function nextIndex(snapshot, owner) {
 }
 
 function legacy113(includeArrowOwner) {
-  const snapshot = structuredClone(readJson(path.join(upstreamDirectory, '1.14.4.json')))
+  const snapshot = normalizeKnownUpstreamCollisions(
+    structuredClone(readJson(path.join(upstreamDirectory, '1.14.4.json')))
+  )
   for (const entityName of [
     'Abstract Villager',
     'Cat',
@@ -297,7 +299,9 @@ function legacy113(includeArrowOwner) {
 }
 
 function legacy114(includeUnhappyCounter) {
-  const snapshot = structuredClone(readJson(path.join(upstreamDirectory, '1.14.4.json')))
+  const snapshot = normalizeKnownUpstreamCollisions(
+    structuredClone(readJson(path.join(upstreamDirectory, '1.14.4.json')))
+  )
   if (!includeUnhappyCounter) {
     removeField(snapshot, 'Abstract Villager', 'UNHAPPY_COUNTER')
     shiftAfter(snapshot, descendants(snapshot, 'Abstract Villager'), 15)
@@ -305,30 +309,68 @@ function legacy114(includeUnhappyCounter) {
   return snapshot
 }
 
+function normalizeKnownUpstreamCollisions(snapshot) {
+  const wolf = snapshot.Wolf
+  if (wolf?.fields) {
+    for (const field of wolf.fields) {
+      if (field.fieldName === 'HEALTH') field.fieldName = 'WOLF_HEALTH'
+    }
+  }
+  return snapshot
+}
+
 function validateSnapshot(version, snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    throw new Error(`${version}: snapshot must be an object`)
+  }
+  if (!snapshot.Entity) {
+    throw new Error(`${version}: root Entity class is missing`)
+  }
   for (const [entityName, entity] of Object.entries(snapshot)) {
+    if (!entity || typeof entity !== 'object' || Array.isArray(entity)) {
+      throw new Error(`${version}:${entityName} must be an object`)
+    }
     if (!Array.isArray(entity.fields)) {
       throw new Error(`${version}:${entityName} has no metadata field array`)
     }
     if (entity.superClass && !snapshot[entity.superClass]) {
       throw new Error(`${version}:${entityName} has unknown superclass ${entity.superClass}`)
     }
+    const localNames = new Set()
     for (const field of entity.fields) {
-      if (!Number.isInteger(field.index) || typeof field.dataType !== 'string'
-          || typeof field.fieldName !== 'string') {
+      if (!Number.isInteger(field.index) || field.index < 0 || field.index > 254 || typeof field.dataType !== 'string'
+          || field.dataType.length === 0 || typeof field.fieldName !== 'string'
+          || field.fieldName.length === 0 || !localNames.add(field.fieldName)) {
         throw new Error(`${version}:${entityName} contains an invalid metadata field`)
       }
     }
 
     const indexes = new Set()
+    const names = new Set()
+    const visited = new Set()
     for (let current = entityName; current; current = snapshot[current]?.superClass) {
+      if (!visited.add(current)) {
+        throw new Error(`${version}:${entityName} has an inheritance cycle at ${current}`)
+      }
       for (const field of snapshot[current]?.fields ?? []) {
         if (indexes.has(field.index)) {
           throw new Error(`${version}:${entityName} reuses metadata index ${field.index}`)
         }
+        if (names.has(field.fieldName)) {
+          throw new Error(`${version}:${entityName} redeclares metadata field ${field.fieldName}`)
+        }
         indexes.add(field.index)
+        names.add(field.fieldName)
       }
     }
+    if (entityName !== 'Entity' && !visited.has('Entity')) {
+      throw new Error(`${version}:${entityName} does not inherit from Entity`)
+    }
+  }
+
+  const sharedFlags = snapshot.Entity.fields.filter(field => field.fieldName === 'SHARED_FLAGS')
+  if (sharedFlags.length !== 1 || sharedFlags[0].dataType !== 'Byte' || sharedFlags[0].index !== 0) {
+    throw new Error(`${version}:Entity.SHARED_FLAGS must be exactly Byte at index 0`)
   }
 }
 
@@ -338,8 +380,18 @@ for (const entry of fs.readdirSync(outputDirectory)) {
 }
 
 const upstreamVersions = readJson(path.join(upstreamDirectory, 'versions.json'))
+if (!Array.isArray(upstreamVersions) || new Set(upstreamVersions).size !== upstreamVersions.length) {
+  throw new Error('Upstream versions.json must be a non-empty array without duplicates')
+}
 for (const version of upstreamVersions) {
-  fs.copyFileSync(path.join(upstreamDirectory, `${version}.json`), path.join(outputDirectory, `${version}.json`))
+  const snapshot = normalizeKnownUpstreamCollisions(
+    readJson(path.join(upstreamDirectory, `${version}.json`))
+  )
+  validateSnapshot(version, snapshot)
+  fs.writeFileSync(
+    path.join(outputDirectory, `${version}.json`),
+    JSON.stringify(snapshot, null, 2)
+  )
 }
 
 const legacyVersions = ['1.9.4', '1.10', '1.11', '1.11.2', '1.12', '1.12.2']
@@ -358,7 +410,6 @@ for (const source of evidence) {
 
 for (const version of legacyVersions) {
   const rawSnapshot = readJson(path.join(legacyDirectory, `${version}.json`))
-  validateSnapshot(version, rawSnapshot)
   const snapshot = canonicalizeLegacy(rawSnapshot)
   validateSnapshot(version, snapshot)
   fs.writeFileSync(path.join(outputDirectory, `${version}.json`), `${JSON.stringify(snapshot, null, 2)}\n`)
