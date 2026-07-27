@@ -107,6 +107,7 @@ public final class EntityMetadataRegistry {
 
         Map<String, MetadataField> flattened = new LinkedHashMap<>();
         flatten(entities, entityName, flattened, ConcurrentHashMap.newKeySet());
+        validateTypes(version, entityName, flattened.values());
         return new EntityMetadataSchema(version, entityName, flattened);
     }
 
@@ -212,25 +213,23 @@ public final class EntityMetadataRegistry {
             if (result == null) {
                 return Map.of();
             }
-            for (Map.Entry<String, RawEntity> entry : result.entrySet()) {
-                if (entry.getValue().fields == null) {
-                    continue;
-                }
-                for (MetadataField field : entry.getValue().fields) {
-                    try {
-                        EntityMetadataTypes.require(field.dataType());
-                    } catch (IllegalArgumentException exception) {
-                        throw new IllegalStateException(
-                                "Unsupported metadata type in " + version + ":"
-                                        + entry.getKey() + "." + field.fieldName(),
-                                exception
-                        );
-                    }
-                }
-            }
             return Map.copyOf(result);
         } catch (IOException exception) {
             throw new IllegalStateException("Cannot load bundled entity-data for " + version, exception);
+        }
+    }
+
+    private static void validateTypes(String version, String entityName, Iterable<MetadataField> fields) {
+        for (MetadataField field : fields) {
+            try {
+                EntityMetadataTypes.require(field.dataType());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalStateException(
+                        "Unsupported metadata type in " + version + ":"
+                                + entityName + "." + field.fieldName(),
+                        exception
+                );
+            }
         }
     }
 

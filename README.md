@@ -24,7 +24,8 @@ Java and Minecraft compatibility are independent. VirtualEntities is compiled fo
 | Range | Status | Evidence |
 |---|---|---|
 | Minecraft 1.9.4-1.13.2 | Supported on Java 17 | Reviewed metadata snapshots, protocol-boundary tests, and Paper + Mineflayer E2E on 1.9.4, 1.12.2, and 1.13.2 |
-| Minecraft 1.14-current bundled snapshots | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, all-snapshot schema/entity mapping verification, and the current Paper + Mineflayer E2E |
+| Minecraft 1.14-current bundled releases | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, exhaustive schema/spawn wire matrices, and the current Paper + Mineflayer E2E |
+| Minecraft 26w14a snapshot | Partially supported on Java 17+ | Every class is structurally audited. PacketEvents 2.13.0 has no serializer for the discarded experimental `Living Block` `MovementData`/`Target` fields, so that one runtime schema is rejected explicitly. |
 | Minecraft 1.8.8 and older | Not supported | Requires a separate boolean-as-byte metadata codec and pre-1.9 single-passenger attach semantics |
 
 The legacy compatibility layer selects the historical living-entity, player, painting, lightning, and experience-orb spawn packets and preserves the pre-1.15 embedded metadata layout. It also converts the logical `Optional<Component>` custom-name API to the pre-1.13 string serializer while retaining the logical value returned by `VirtualMetadata#get`.
@@ -223,11 +224,13 @@ Spawn locations, rotations, velocity, attribute values, and modifier amounts mus
 
 ## Testing
 
-The normal verification gate runs unit, protocol-boundary, generated-source, and concurrency tests:
+The normal verification gate runs unit, protocol-boundary, generated-source, concurrency, and exhaustive entity matrices:
 
 ```bash
 ./gradlew clean build
 ```
+
+The all-entity matrices are data-driven and expand automatically when PacketEvents or bundled entity-data changes. At `0.9.0` they cover every one of the 4,877 snapshot/entity schemas, every one of the 6,856 registered server-version/entity schema combinations, and actual Netty encoding for all 6,856 corresponding spawn sequences. Abstract entity-data classes and snapshot-only classes are covered by the schema matrix; every concrete PacketEvents type registered for each of the 59 supported server protocol versions is also covered by the wire matrix. Reviewed unsupported snapshot fields must be listed explicitly in the test and cannot silently skip a case.
 
 The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.13.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, an attack routed back through `handleInteraction`, and an atomic Text Display translation plus root-anchor relocation bundle:
 

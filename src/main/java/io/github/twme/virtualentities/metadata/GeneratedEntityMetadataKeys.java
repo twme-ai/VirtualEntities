@@ -455,54 +455,54 @@ public final class GeneratedEntityMetadataKeys {
         /** Metadata field {@code HEAD_POSE}. */
         public static final MetadataKey<Vector3f> HEAD_POSE = MetadataKey.versioned(
                 "HEAD_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
 
         /** Metadata field {@code BODY_POSE}. */
         public static final MetadataKey<Vector3f> BODY_POSE = MetadataKey.versioned(
                 "BODY_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
 
         /** Metadata field {@code LEFT_ARM_POSE}. */
         public static final MetadataKey<Vector3f> LEFT_ARM_POSE = MetadataKey.versioned(
                 "LEFT_ARM_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
 
         /** Metadata field {@code RIGHT_ARM_POSE}. */
         public static final MetadataKey<Vector3f> RIGHT_ARM_POSE = MetadataKey.versioned(
                 "RIGHT_ARM_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
 
         /** Metadata field {@code LEFT_LEG_POSE}. */
         public static final MetadataKey<Vector3f> LEFT_LEG_POSE = MetadataKey.versioned(
                 "LEFT_LEG_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
 
         /** Metadata field {@code RIGHT_LEG_POSE}. */
         public static final MetadataKey<Vector3f> RIGHT_LEG_POSE = MetadataKey.versioned(
                 "RIGHT_LEG_POSE",
-                EntityDataTypes.VECTOR3F,
+                EntityDataTypes.ROTATION,
                 Map.ofEntries(
-                        Map.entry("Rotations", EntityDataTypes.VECTOR3F)
+                        Map.entry("Rotations", EntityDataTypes.ROTATION)
                 )
         );
     }

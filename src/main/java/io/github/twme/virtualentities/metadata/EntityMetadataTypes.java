@@ -28,7 +28,8 @@ final class EntityMetadataTypes {
             case "CompoundTag", "NBTTagCompound" -> EntityDataTypes.NBT;
             case "ItemStack" -> EntityDataTypes.ITEMSTACK;
             case "Optional<UUID>", "Optional<EntityReference<LivingEntity>>" -> EntityDataTypes.OPTIONAL_UUID;
-            case "Rotations", "Vector3f", "Vector3fc" -> EntityDataTypes.VECTOR3F;
+            case "Rotations" -> EntityDataTypes.ROTATION;
+            case "Vector3f", "Vector3fc" -> EntityDataTypes.VECTOR3F;
             case "BlockPos" -> EntityDataTypes.BLOCK_POSITION;
             case "Optional<BlockPos>" -> EntityDataTypes.OPTIONAL_BLOCK_POSITION;
             case "Quaternionf", "Quaternionfc" -> EntityDataTypes.QUATERNION;

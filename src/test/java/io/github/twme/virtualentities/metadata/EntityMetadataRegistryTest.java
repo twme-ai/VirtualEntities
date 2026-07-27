@@ -19,10 +19,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertSame;
 
 class EntityMetadataRegistryTest {
     private final EntityMetadataRegistry registry = new EntityMetadataRegistry();
@@ -312,6 +313,29 @@ class EntityMetadataRegistryTest {
         metadata.set(GeneratedEntityMetadataKeys.Display.TRANSLATION, translation);
         assertEquals(translation, metadata.get(GeneratedEntityMetadataKeys.Display.TRANSLATION).orElseThrow());
         assertSame(EntityDataTypes.VECTOR3F, metadata.entityData().get(0).getType());
+    }
+
+    @Test
+    void usesTheRotationSerializerForArmorStandPosesAcrossTheSupportedRange() {
+        Vector3f pose = new Vector3f(10, 20, 30);
+        for (String version : List.of("1.9.4", "1.21.11", "26.2")) {
+            VirtualMetadata metadata = new VirtualMetadata(registry.schema(version, EntityTypes.ARMOR_STAND));
+            metadata.set(GeneratedEntityMetadataKeys.ArmorStand.HEAD_POSE, pose);
+
+            assertEquals(pose, metadata.get(GeneratedEntityMetadataKeys.ArmorStand.HEAD_POSE).orElseThrow());
+            assertSame(EntityDataTypes.ROTATION, metadata.entityData().get(0).getType());
+        }
+    }
+
+    @Test
+    void isolatesUnsupportedExperimentalTypesToTheirAffectedSchema() {
+        assertDoesNotThrow(() -> registry.schema("26w14a", "Entity"));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> registry.schema("26w14a", "Living Block")
+        );
+        assertTrue(exception.getMessage().contains("Living Block.MOVEMENT_DATA"));
     }
 
     private static EntityType entityType(String name, EntityType parent) {

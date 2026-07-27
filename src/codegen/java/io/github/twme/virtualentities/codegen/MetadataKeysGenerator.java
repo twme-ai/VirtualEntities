@@ -222,7 +222,7 @@ public final class MetadataKeysGenerator {
                 "java.util.Optional", "java.util.UUID");
         add(result, "Optional<EntityReference<LivingEntity>>", "Optional<UUID>", "OPTIONAL_UUID",
                 "java.util.Optional", "java.util.UUID");
-        add(result, "Rotations", "Vector3f", "VECTOR3F",
+        add(result, "Rotations", "Vector3f", "ROTATION",
                 "com.github.retrooper.packetevents.util.Vector3f");
         add(result, "Vector3f", "Vector3f", "VECTOR3F",
                 "com.github.retrooper.packetevents.util.Vector3f");

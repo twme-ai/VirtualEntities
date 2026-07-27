@@ -72,6 +72,10 @@ tasks.named<JavaCompile>(legacyIntegrationPlugin.compileJavaTaskName) {
 
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        events("failed", "skipped")
+        showStandardStreams = true
+    }
 }
 
 val generatedMetadataKeys = layout.projectDirectory.file(
