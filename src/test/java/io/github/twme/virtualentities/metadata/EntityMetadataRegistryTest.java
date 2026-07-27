@@ -1,6 +1,5 @@
 package io.github.twme.virtualentities.metadata;
 
-import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
@@ -133,12 +132,7 @@ class EntityMetadataRegistryTest {
     @Test
     void createsEntityDataUsingResolvedIndex() {
         VirtualMetadata metadata = new VirtualMetadata(registry.schema("1.21.11", "Pig"));
-        EntityDataType<Boolean> booleanType = new EntityDataType<>(
-                null,
-                wrapper -> false,
-                (wrapper, value) -> { }
-        );
-        metadata.set(MetadataKey.of("CUSTOM_NAME_VISIBLE", booleanType), true);
+        metadata.set(MetadataKey.of("CUSTOM_NAME_VISIBLE", EntityDataTypes.BOOLEAN), true);
 
         assertEquals(1, metadata.entityData().size());
         assertEquals(3, metadata.entityData().get(0).getIndex());

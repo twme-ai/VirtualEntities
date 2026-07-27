@@ -20,6 +20,7 @@ import java.util.function.Predicate;
 public final class VirtualAudienceTracker<C> implements AutoCloseable {
     private final VirtualEntity entity;
     private final Function<C, VirtualViewer> viewerFactory;
+    private final Function<C, ?> transportIdentity;
     private final Predicate<C> visibilityRule;
     private final Map<UUID, Tracked<C>> tracked = new LinkedHashMap<>();
     private boolean closed;
@@ -27,10 +28,12 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
     private VirtualAudienceTracker(
             VirtualEntity entity,
             Function<C, VirtualViewer> viewerFactory,
+            Function<C, ?> transportIdentity,
             Predicate<C> visibilityRule
     ) {
         this.entity = Objects.requireNonNull(entity, "entity");
         this.viewerFactory = Objects.requireNonNull(viewerFactory, "viewerFactory");
+        this.transportIdentity = Objects.requireNonNull(transportIdentity, "transportIdentity");
         this.visibilityRule = Objects.requireNonNull(visibilityRule, "visibilityRule");
     }
 
@@ -39,7 +42,20 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
             Function<C, VirtualViewer> viewerFactory,
             Predicate<C> visibilityRule
     ) {
-        return new VirtualAudienceTracker<>(entity, viewerFactory, visibilityRule);
+        return new VirtualAudienceTracker<>(entity, viewerFactory, Function.identity(), visibilityRule);
+    }
+
+    /**
+     * Creates a tracker with an explicit connection identity extractor for platforms that reuse candidate objects.
+     * A changed identity replaces the UUID's transport and replays the entity state.
+     */
+    public static <C> VirtualAudienceTracker<C> of(
+            VirtualEntity entity,
+            Function<C, VirtualViewer> viewerFactory,
+            Function<C, ?> transportIdentity,
+            Predicate<C> visibilityRule
+    ) {
+        return new VirtualAudienceTracker<>(entity, viewerFactory, transportIdentity, visibilityRule);
     }
 
     /** Re-evaluates one candidate and returns whether it is now tracked. */
@@ -100,12 +116,14 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
             }
             return false;
         }
-        if (previous == null || !Objects.equals(previous.candidate(), candidate)) {
+        if (previous == null
+                || !Objects.equals(previous.candidate(), candidate)
+                || !Objects.equals(previous.transportIdentity(), transportIdentity.apply(candidate))) {
             if (previous != null) {
                 removeOwnedViewer(viewer.id(), previous);
             }
             boolean owned = !entity.hasViewer(viewer.id());
-            tracked.put(viewer.id(), new Tracked<>(candidate, owned));
+            tracked.put(viewer.id(), new Tracked<>(candidate, transportIdentity.apply(candidate), owned));
             if (owned) {
                 entity.addViewer(viewer);
             }
@@ -125,6 +143,6 @@ public final class VirtualAudienceTracker<C> implements AutoCloseable {
         }
     }
 
-    private record Tracked<C>(C candidate, boolean owned) {
+    private record Tracked<C>(C candidate, Object transportIdentity, boolean owned) {
     }
 }

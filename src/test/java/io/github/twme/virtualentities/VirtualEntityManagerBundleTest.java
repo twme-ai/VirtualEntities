@@ -6,6 +6,7 @@ import com.github.retrooper.packetevents.protocol.world.Location;
 import com.github.retrooper.packetevents.util.Vector3f;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerBundle;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
@@ -241,6 +242,47 @@ class VirtualEntityManagerBundleTest {
         assertInstanceOf(WrapperPlayServerEntityMetadata.class, packets.get(1));
         assertInstanceOf(WrapperPlayServerBundle.class, packets.get(2));
         assertInstanceOf(WrapperPlayServerEntityPositionSync.class, packets.get(3));
+    }
+
+    @Test
+    void routesBundlesThroughTheLatestCanonicalTransport() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_600));
+        UUID viewerId = UUID.randomUUID();
+        List<PacketWrapper<?>> stalePackets = new ArrayList<>();
+        List<PacketWrapper<?>> currentPackets = new ArrayList<>();
+        VirtualViewer stale = viewer(viewerId, ClientVersion.V_1_21_11, stalePackets);
+        VirtualViewer current = viewer(viewerId, ClientVersion.V_1_21_11, currentPackets);
+        VirtualEntity first = textDisplay(manager, stale, new Location(0, 64, 0, 0, 0));
+        VirtualEntity second = textDisplay(manager, current, new Location(0, 64, 0, 0, 0));
+        stalePackets.clear();
+        currentPackets.clear();
+
+        manager.bundle(() -> {
+            first.teleport(new Location(1, 64, 0, 0, 0));
+            second.teleport(new Location(2, 64, 0, 0, 0));
+        });
+
+        assertTrue(stalePackets.isEmpty());
+        assertEquals(4, currentPackets.size());
+        assertDelimiterPair(currentPackets);
+        assertEquals(List.of(first.entityId(), second.entityId()), teleportEntityIds(currentPackets));
+    }
+
+    @Test
+    void explicitViewerReplacementReplaysAllVisibleEntities() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_700));
+        UUID viewerId = UUID.randomUUID();
+        List<PacketWrapper<?>> oldPackets = new ArrayList<>();
+        List<PacketWrapper<?>> newPackets = new ArrayList<>();
+        VirtualViewer original = viewer(viewerId, ClientVersion.V_1_21_11, oldPackets);
+        textDisplay(manager, original, new Location(0, 64, 0, 0, 0));
+        textDisplay(manager, original, new Location(1, 64, 0, 0, 0));
+        oldPackets.clear();
+
+        manager.replaceViewer(viewer(viewerId, ClientVersion.V_1_21_11, newPackets));
+
+        assertEquals(2, oldPackets.stream().filter(WrapperPlayServerDestroyEntities.class::isInstance).count());
+        assertEquals(2, newPackets.stream().filter(WrapperPlayServerSpawnEntity.class::isInstance).count());
     }
 
     private static VirtualEntity textDisplay(

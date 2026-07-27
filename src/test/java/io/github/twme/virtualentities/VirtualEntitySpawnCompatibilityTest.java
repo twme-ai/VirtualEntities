@@ -6,6 +6,7 @@ import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import com.github.retrooper.packetevents.protocol.world.Direction;
@@ -116,7 +117,10 @@ class VirtualEntitySpawnCompatibilityTest {
         pig.addPassenger(passenger);
 
         List<PacketWrapper<?>> packets = new ArrayList<>();
-        pig.addViewer(VirtualViewer.of(UUID.randomUUID(), packets::add)).spawn(location());
+        VirtualViewer viewer = VirtualViewer.of(UUID.randomUUID(), ClientVersion.V_1_9_3, packets::add);
+        passenger.addViewer(viewer).spawn(location());
+        packets.clear();
+        pig.addViewer(viewer).spawn(location());
 
         List<WrapperPlayServerEntityEquipment> equipmentPackets = packets.stream()
                 .filter(WrapperPlayServerEntityEquipment.class::isInstance)

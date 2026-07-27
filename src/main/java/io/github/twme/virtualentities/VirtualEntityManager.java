@@ -21,16 +21,25 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
-/** Owns virtual entity identity and lookup for one library instance. */
+/**
+ * Owns virtual entity identity, canonical viewer transports, outbound ordering, and lookup for one library instance.
+ * Closing a manager is terminal. Transport callbacks may re-enter library APIs and are never invoked while an entity
+ * state monitor or the manager lifecycle lock is held.
+ */
 public final class VirtualEntityManager implements AutoCloseable {
     private final EntityIdProvider entityIdProvider;
     private final EntityMetadataRegistry metadataRegistry;
     private final Object relationshipLock = new Object();
-    private final Object packetSendLock = new Object();
+    private final Object lifecycleLock = new Object();
     private final Map<Integer, VirtualEntity> byId = new ConcurrentHashMap<>();
     private final Map<UUID, VirtualEntity> byUuid = new ConcurrentHashMap<>();
+    private final Map<UUID, VirtualViewer> viewerTransports = new ConcurrentHashMap<>();
+    private final Map<UUID, ReentrantLock> packetSendLocks = new ConcurrentHashMap<>();
     private final ThreadLocal<BundleContext> activeBundle = new ThreadLocal<>();
+    private volatile VirtualInteractionValidator interactionValidator = interaction -> true;
+    private volatile boolean closed;
 
     VirtualEntityManager(EntityIdProvider entityIdProvider, EntityMetadataRegistry metadataRegistry) {
         this.entityIdProvider = Objects.requireNonNull(entityIdProvider, "entityIdProvider");
@@ -38,11 +47,13 @@ public final class VirtualEntityManager implements AutoCloseable {
     }
 
     public VirtualEntity.Builder entity(EntityType type) {
+        ensureOpen();
         return VirtualEntity.builder(this, Objects.requireNonNull(type, "type"));
     }
 
     /** Creates a player entity builder using the profile UUID as the entity UUID. */
     public VirtualEntity.Builder player(UserProfile profile) {
+        ensureOpen();
         return VirtualEntity.builder(this, EntityTypes.PLAYER)
                 .playerProfile(Objects.requireNonNull(profile, "profile"));
     }
@@ -63,6 +74,40 @@ public final class VirtualEntityManager implements AutoCloseable {
         return metadataRegistry;
     }
 
+    /** Returns whether this manager has been permanently closed. */
+    public boolean isClosed() {
+        return closed;
+    }
+
+    /**
+     * Replaces the current transport for a UUID and replays every visible managed entity to it.
+     * Platforms should call this after a reconnect even when their player context object is reused.
+     */
+    public void replaceViewer(VirtualViewer viewer) {
+        ensureOpen();
+        if (activeBundle.get() != null) {
+            throw new IllegalStateException("Viewer transports cannot be replaced inside a bundle scope");
+        }
+        VirtualViewer replacement = Objects.requireNonNull(viewer, "viewer");
+        ReentrantLock lock = packetSendLocks.computeIfAbsent(replacement.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            viewerTransports.put(replacement.id(), replacement);
+            replayViewerReplacement(replacement, null);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Installs additional platform authorization for inbound interactions.
+     * Core filtering only proves entity ownership, spawn state, and viewer membership.
+     */
+    public void interactionValidator(VirtualInteractionValidator validator) {
+        ensureOpen();
+        interactionValidator = Objects.requireNonNull(validator, "validator");
+    }
+
     /**
      * Runs entity updates in one client bundle per affected viewer when their protocol supports it.
      * Only packets emitted on the calling thread are captured, and nested calls on that thread join the
@@ -71,6 +116,7 @@ public final class VirtualEntityManager implements AutoCloseable {
      * exception when the callback also failed.
      */
     public void bundle(Runnable updates) {
+        ensureOpen();
         Objects.requireNonNull(updates, "updates");
         if (activeBundle.get() != null) {
             updates.run();
@@ -99,7 +145,7 @@ public final class VirtualEntityManager implements AutoCloseable {
         rethrow(updateFailure);
     }
 
-    /** Validates and dispatches a pre-26.1 interact-entity packet when it targets a visible entity. */
+    /** Filters and dispatches a pre-26.1 interact-entity packet when it targets a visible entity. */
     public Optional<VirtualEntityInteraction> handleInteraction(
             User actor,
             WrapperPlayClientInteractEntity packet
@@ -124,7 +170,7 @@ public final class VirtualEntityManager implements AutoCloseable {
         );
     }
 
-    /** Validates and dispatches a 26.1+ attack packet when it targets a visible entity. */
+    /** Filters and dispatches a 26.1+ attack packet when it targets a visible entity. */
     public Optional<VirtualEntityInteraction> handleInteraction(User actor, WrapperPlayClientAttack packet) {
         Objects.requireNonNull(packet, "packet");
         return dispatchInteraction(
@@ -138,6 +184,7 @@ public final class VirtualEntityManager implements AutoCloseable {
     }
 
     int nextEntityId() {
+        ensureOpen();
         int id = entityIdProvider.nextEntityId();
         if (byId.containsKey(id)) {
             throw new IllegalStateException("EntityIdProvider returned duplicate ID " + id);
@@ -146,12 +193,15 @@ public final class VirtualEntityManager implements AutoCloseable {
     }
 
     void register(VirtualEntity entity) {
-        if (byId.putIfAbsent(entity.entityId(), entity) != null) {
-            throw new IllegalArgumentException("Duplicate virtual entity ID " + entity.entityId());
-        }
-        if (byUuid.putIfAbsent(entity.uuid(), entity) != null) {
-            byId.remove(entity.entityId(), entity);
-            throw new IllegalArgumentException("Duplicate virtual entity UUID " + entity.uuid());
+        synchronized (lifecycleLock) {
+            ensureOpen();
+            if (byId.putIfAbsent(entity.entityId(), entity) != null) {
+                throw new IllegalArgumentException("Duplicate virtual entity ID " + entity.entityId());
+            }
+            if (byUuid.putIfAbsent(entity.uuid(), entity) != null) {
+                byId.remove(entity.entityId(), entity);
+                throw new IllegalArgumentException("Duplicate virtual entity UUID " + entity.uuid());
+            }
         }
     }
 
@@ -164,16 +214,61 @@ public final class VirtualEntityManager implements AutoCloseable {
         return relationshipLock;
     }
 
+    void registerViewerTransport(VirtualEntity source, VirtualViewer viewer) {
+        ensureOpen();
+        ReentrantLock lock = packetSendLocks.computeIfAbsent(viewer.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            VirtualViewer previous = viewerTransports.get(viewer.id());
+            if (activeBundle.get() != null && previous != null && previous != viewer) {
+                throw new IllegalStateException("Viewer transports cannot be replaced inside a bundle scope");
+            }
+            viewerTransports.put(viewer.id(), viewer);
+            if (previous != null && previous != viewer) {
+                replayViewerReplacement(viewer, source);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void replayViewerReplacement(VirtualViewer viewer, VirtualEntity source) {
+        Throwable failure = null;
+        for (VirtualEntity entity : List.copyOf(byId.values())) {
+            if (entity != source) {
+                try {
+                    entity.replaceViewerTransport(viewer);
+                } catch (RuntimeException | Error entityFailure) {
+                    if (failure == null) {
+                        failure = entityFailure;
+                    } else {
+                        failure.addSuppressed(entityFailure);
+                    }
+                }
+            }
+        }
+        rethrow(failure);
+    }
+
     void send(VirtualViewer viewer, PacketWrapper<?> packet) {
         Objects.requireNonNull(viewer, "viewer");
         Objects.requireNonNull(packet, "packet");
+        viewerTransports.putIfAbsent(viewer.id(), viewer);
         BundleContext context = activeBundle.get();
         if (context != null) {
-            context.enqueue(viewer, packet);
+            context.enqueue(viewer.id(), packet);
             return;
         }
-        synchronized (packetSendLock) {
+        sendNow(viewer.id(), packet);
+    }
+
+    void sendDirect(VirtualViewer viewer, PacketWrapper<?> packet) {
+        ReentrantLock lock = packetSendLocks.computeIfAbsent(viewer.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
             viewer.send(packet);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -202,37 +297,74 @@ public final class VirtualEntityManager implements AutoCloseable {
                 target,
                 sneaking
         );
+        if (target.isPresent() && !finite(target.get())) {
+            return Optional.empty();
+        }
+        if (!interactionValidator.test(interaction)) {
+            return Optional.empty();
+        }
         entity.dispatchInteraction(interaction);
         return Optional.of(interaction);
     }
 
     @Override
     public void close() {
-        for (VirtualEntity entity : java.util.List.copyOf(byId.values())) {
-            entity.remove();
+        List<VirtualEntity> entities;
+        synchronized (lifecycleLock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            entities = List.copyOf(byId.values());
         }
+        Throwable failure = null;
+        for (VirtualEntity entity : entities) {
+            try {
+                entity.remove();
+            } catch (RuntimeException | Error entityFailure) {
+                if (failure == null) {
+                    failure = entityFailure;
+                } else {
+                    failure.addSuppressed(entityFailure);
+                }
+            }
+        }
+        viewerTransports.clear();
+        packetSendLocks.clear();
+        rethrow(failure);
     }
 
     private void flush(BundleContext context) {
         Throwable failure = null;
-        synchronized (packetSendLock) {
-            for (PendingViewer pending : context.pendingViewers()) {
-                try {
-                    flush(pending);
-                } catch (RuntimeException | Error viewerFailure) {
-                    if (failure == null) {
-                        failure = viewerFailure;
-                    } else {
-                        failure.addSuppressed(viewerFailure);
-                    }
+        for (PendingViewer pending : context.pendingViewers()) {
+            try {
+                flush(pending);
+            } catch (RuntimeException | Error viewerFailure) {
+                if (failure == null) {
+                    failure = viewerFailure;
+                } else {
+                    failure.addSuppressed(viewerFailure);
                 }
             }
         }
         rethrow(failure);
     }
 
-    private static void flush(PendingViewer pending) {
-        VirtualViewer viewer = pending.viewer();
+    private void flush(PendingViewer pending) {
+        ReentrantLock lock = packetSendLocks.computeIfAbsent(pending.viewerId(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            VirtualViewer viewer = viewerTransports.get(pending.viewerId());
+            if (viewer == null) {
+                return;
+            }
+            flushLocked(viewer, pending.packets());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static void flushLocked(VirtualViewer viewer, List<PacketWrapper<?>> packets) {
         boolean bundled = viewer.clientVersion().isNewerThanOrEquals(ClientVersion.V_1_19_4);
         boolean opened = false;
         Throwable failure = null;
@@ -241,7 +373,7 @@ public final class VirtualEntityManager implements AutoCloseable {
                 viewer.send(new WrapperPlayServerBundle());
                 opened = true;
             }
-            for (PacketWrapper<?> packet : pending.packets()) {
+            for (PacketWrapper<?> packet : packets) {
                 try {
                     viewer.send(packet);
                 } catch (RuntimeException | Error packetFailure) {
@@ -280,8 +412,8 @@ public final class VirtualEntityManager implements AutoCloseable {
     private static final class BundleContext {
         private final Map<UUID, PendingViewer> viewers = new LinkedHashMap<>();
 
-        private void enqueue(VirtualViewer viewer, PacketWrapper<?> packet) {
-            viewers.computeIfAbsent(viewer.id(), ignored -> new PendingViewer(viewer)).packets().add(packet);
+        private void enqueue(UUID viewerId, PacketWrapper<?> packet) {
+            viewers.computeIfAbsent(viewerId, PendingViewer::new).packets().add(packet);
         }
 
         private Collection<PendingViewer> pendingViewers() {
@@ -289,9 +421,35 @@ public final class VirtualEntityManager implements AutoCloseable {
         }
     }
 
-    private record PendingViewer(VirtualViewer viewer, List<PacketWrapper<?>> packets) {
-        private PendingViewer(VirtualViewer viewer) {
-            this(viewer, new ArrayList<>());
+    private record PendingViewer(UUID viewerId, List<PacketWrapper<?>> packets) {
+        private PendingViewer(UUID viewerId) {
+            this(viewerId, new ArrayList<>());
         }
+    }
+
+    private void sendNow(UUID viewerId, PacketWrapper<?> packet) {
+        ReentrantLock lock = packetSendLocks.computeIfAbsent(viewerId, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            VirtualViewer viewer = viewerTransports.get(viewerId);
+            if (viewer == null) {
+                return;
+            }
+            viewer.send(packet);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("VirtualEntityManager is closed");
+        }
+    }
+
+    private static boolean finite(com.github.retrooper.packetevents.util.Vector3d vector) {
+        return Double.isFinite(vector.getX())
+                && Double.isFinite(vector.getY())
+                && Double.isFinite(vector.getZ());
     }
 }

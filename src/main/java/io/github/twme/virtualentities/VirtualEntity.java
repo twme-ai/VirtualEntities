@@ -57,7 +57,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-/** A client-side entity whose lifecycle is represented entirely by PacketEvents packets. */
+/**
+ * A client-side entity whose lifecycle is represented entirely by PacketEvents packets.
+ * State and recipient snapshots are taken under internal locks; custom transports are invoked after those locks
+ * are released and are serialized per viewer UUID by the owning manager.
+ */
 public final class VirtualEntity {
     private final VirtualEntityManager manager;
     private final int entityId;
@@ -202,20 +206,22 @@ public final class VirtualEntity {
     }
 
     /** Replaces the player name and textures, re-spawning the entity for current viewers when needed. */
-    public synchronized VirtualEntity setPlayerProfile(UserProfile profile) {
-        ensureActive();
-        ensurePlayer();
-        UserProfile replacement = validatedProfile(profile);
-        if (!uuid.equals(replacement.getUUID())) {
-            throw new IllegalArgumentException("Player profile UUID cannot change after entity creation");
-        }
-        playerProfile = copyProfile(replacement);
-        if (spawned) {
-            for (VirtualViewer viewer : viewers.values()) {
-                manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
-                manager.send(viewer, playerInfoRemovePacket());
-                sendSpawn(viewer);
+    public VirtualEntity setPlayerProfile(UserProfile profile) {
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureActive();
+            ensurePlayer();
+            UserProfile replacement = validatedProfile(profile);
+            if (!uuid.equals(replacement.getUUID())) {
+                throw new IllegalArgumentException("Player profile UUID cannot change after entity creation");
             }
+            playerProfile = copyProfile(replacement);
+            currentViewers = spawned ? List.copyOf(viewers.values()) : List.of();
+        }
+        for (VirtualViewer viewer : currentViewers) {
+            manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
+            manager.send(viewer, playerInfoRemovePacket());
+            sendSpawn(viewer);
         }
         return this;
     }
@@ -225,10 +231,12 @@ public final class VirtualEntity {
         return gameMode;
     }
 
-    public synchronized VirtualEntity setGameMode(GameMode gameMode) {
-        ensureActive();
-        ensurePlayer();
-        this.gameMode = Objects.requireNonNull(gameMode, "gameMode");
+    public VirtualEntity setGameMode(GameMode gameMode) {
+        synchronized (this) {
+            ensureActive();
+            ensurePlayer();
+            this.gameMode = Objects.requireNonNull(gameMode, "gameMode");
+        }
         syncPlayerInfo(
                 WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_GAME_MODE,
                 WrapperPlayServerPlayerInfo.Action.UPDATE_GAME_MODE
@@ -241,10 +249,12 @@ public final class VirtualEntity {
         return Optional.ofNullable(tabListName);
     }
 
-    public synchronized VirtualEntity setTabListName(Component tabListName) {
-        ensureActive();
-        ensurePlayer();
-        this.tabListName = tabListName;
+    public VirtualEntity setTabListName(Component tabListName) {
+        synchronized (this) {
+            ensureActive();
+            ensurePlayer();
+            this.tabListName = tabListName;
+        }
         syncPlayerInfo(
                 WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_DISPLAY_NAME,
                 WrapperPlayServerPlayerInfo.Action.UPDATE_DISPLAY_NAME
@@ -257,18 +267,21 @@ public final class VirtualEntity {
         return listed;
     }
 
-    public synchronized VirtualEntity setListed(boolean listed) {
-        ensureActive();
-        ensurePlayer();
-        this.listed = listed;
-        if (spawned) {
-            PacketWrapper<?> packet = modernPlayerInfo()
+    public VirtualEntity setListed(boolean listed) {
+        PacketWrapper<?> packet;
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureActive();
+            ensurePlayer();
+            this.listed = listed;
+            packet = spawned ? modernPlayerInfo()
                     ? playerInfoUpdatePacket(EnumSet.of(WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LISTED))
                     : listed
                             ? legacyPlayerInfoPacket(WrapperPlayServerPlayerInfo.Action.ADD_PLAYER)
-                            : playerInfoRemovePacket();
-            broadcast(packet);
+                            : playerInfoRemovePacket() : null;
+            currentViewers = packet == null ? List.of() : List.copyOf(viewers.values());
         }
+        broadcast(currentViewers, packet);
         return this;
     }
 
@@ -277,10 +290,12 @@ public final class VirtualEntity {
         return latency;
     }
 
-    public synchronized VirtualEntity setLatency(int latency) {
-        ensureActive();
-        ensurePlayer();
-        this.latency = latency;
+    public VirtualEntity setLatency(int latency) {
+        synchronized (this) {
+            ensureActive();
+            ensurePlayer();
+            this.latency = latency;
+        }
         syncPlayerInfo(
                 WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LATENCY,
                 WrapperPlayServerPlayerInfo.Action.UPDATE_LATENCY
@@ -294,23 +309,31 @@ public final class VirtualEntity {
     }
 
     /** Sets one equipment slot and immediately updates current viewers when spawned. */
-    public synchronized VirtualEntity setEquipment(EquipmentSlot slot, ItemStack item) {
-        ensureActive();
-        equipment.put(Objects.requireNonNull(slot, "slot"), Objects.requireNonNull(item, "item"));
-        if (spawned) {
-            broadcast(equipmentPacket(slot, item));
+    public VirtualEntity setEquipment(EquipmentSlot slot, ItemStack item) {
+        List<VirtualViewer> currentViewers;
+        PacketWrapper<?> packet;
+        synchronized (this) {
+            ensureActive();
+            equipment.put(Objects.requireNonNull(slot, "slot"), Objects.requireNonNull(item, "item"));
+            packet = equipmentPacket(slot, item);
+            currentViewers = spawned ? List.copyOf(viewers.values()) : List.of();
         }
+        broadcast(currentViewers, packet);
         return this;
     }
 
     /** Clears one equipment slot and immediately updates current viewers when spawned. */
-    public synchronized VirtualEntity clearEquipment(EquipmentSlot slot) {
-        ensureActive();
-        Objects.requireNonNull(slot, "slot");
-        equipment.remove(slot);
-        if (spawned) {
-            broadcast(equipmentPacket(slot, ItemStack.EMPTY));
+    public VirtualEntity clearEquipment(EquipmentSlot slot) {
+        List<VirtualViewer> currentViewers;
+        PacketWrapper<?> packet;
+        synchronized (this) {
+            ensureActive();
+            Objects.requireNonNull(slot, "slot");
+            equipment.remove(slot);
+            packet = equipmentPacket(slot, ItemStack.EMPTY);
+            currentViewers = spawned ? List.copyOf(viewers.values()) : List.of();
         }
+        broadcast(currentViewers, packet);
         return this;
     }
 
@@ -325,37 +348,43 @@ public final class VirtualEntity {
     }
 
     /** Sets an attribute and its complete modifier list. */
-    public synchronized VirtualEntity setAttribute(
+    public VirtualEntity setAttribute(
             Attribute attribute,
             double value,
             List<WrapperPlayServerUpdateAttributes.PropertyModifier> modifiers
     ) {
-        ensureActive();
-        WrapperPlayServerUpdateAttributes.Property property = new WrapperPlayServerUpdateAttributes.Property(
-                Objects.requireNonNull(attribute, "attribute"),
-                value,
-                List.copyOf(Objects.requireNonNull(modifiers, "modifiers"))
-        );
-        attributes.put(attribute, property);
-        if (spawned) {
-            broadcast(new WrapperPlayServerUpdateAttributes(entityId, List.of(property)));
+        validateFinite(value, "attribute value");
+        List<WrapperPlayServerUpdateAttributes.PropertyModifier> checkedModifiers =
+                List.copyOf(Objects.requireNonNull(modifiers, "modifiers"));
+        for (WrapperPlayServerUpdateAttributes.PropertyModifier modifier : checkedModifiers) {
+            validateFinite(Objects.requireNonNull(modifier, "modifier").getAmount(), "attribute modifier amount");
         }
+        WrapperPlayServerUpdateAttributes.Property property;
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureActive();
+            property = new WrapperPlayServerUpdateAttributes.Property(
+                    Objects.requireNonNull(attribute, "attribute"), value, checkedModifiers);
+            attributes.put(attribute, property);
+            currentViewers = spawned ? List.copyOf(viewers.values()) : List.of();
+        }
+        broadcast(currentViewers, new WrapperPlayServerUpdateAttributes(entityId, List.of(property)));
         return this;
     }
 
     /** Restores an attribute to its PacketEvents default value. */
-    public synchronized VirtualEntity resetAttribute(Attribute attribute) {
-        ensureActive();
-        Objects.requireNonNull(attribute, "attribute");
-        attributes.remove(attribute);
-        if (spawned) {
-            WrapperPlayServerUpdateAttributes.Property reset = new WrapperPlayServerUpdateAttributes.Property(
-                    attribute,
-                    attribute.getDefaultValue(),
-                    List.of()
-            );
-            broadcast(new WrapperPlayServerUpdateAttributes(entityId, List.of(reset)));
+    public VirtualEntity resetAttribute(Attribute attribute) {
+        WrapperPlayServerUpdateAttributes.Property reset;
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureActive();
+            Objects.requireNonNull(attribute, "attribute");
+            attributes.remove(attribute);
+            validateFinite(attribute.getDefaultValue(), "attribute default value");
+            reset = new WrapperPlayServerUpdateAttributes.Property(attribute, attribute.getDefaultValue(), List.of());
+            currentViewers = spawned ? List.copyOf(viewers.values()) : List.of();
         }
+        broadcast(currentViewers, new WrapperPlayServerUpdateAttributes(entityId, List.of(reset)));
         return this;
     }
 
@@ -453,16 +482,84 @@ public final class VirtualEntity {
      * @param viewer the prospective viewer
      * @return this entity
      */
-    public synchronized VirtualEntity addViewer(VirtualViewer viewer) {
-        ensureActive();
+    public VirtualEntity addViewer(VirtualViewer viewer) {
         Objects.requireNonNull(viewer, "viewer");
-        if (!supports(viewer)) {
-            return this;
+        VirtualViewer previous;
+        boolean sendSpawn;
+        synchronized (this) {
+            ensureActive();
+            if (!supports(viewer)) {
+                return this;
+            }
+            previous = viewers.put(viewer.id(), viewer);
+            sendSpawn = previous != viewer && spawned;
         }
-        if (viewers.putIfAbsent(viewer.id(), viewer) == null && spawned) {
-            sendSpawn(viewer);
+        try {
+            manager.registerViewerTransport(this, viewer);
+            if (sendSpawn) {
+                if (previous != null) {
+                    destroyOn(previous);
+                }
+                sendSpawn(viewer);
+            }
+        } catch (RuntimeException | Error failure) {
+            if (sendSpawn) {
+                try {
+                    destroyOn(viewer);
+                } catch (RuntimeException | Error cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            removeViewerAfterFailure(viewer, failure);
+            throw failure;
         }
         return this;
+    }
+
+    /**
+     * Replays this entity's complete retained state to one registered viewer.
+     * A failed replay removes the viewer membership so a later {@link #addViewer(VirtualViewer)} can retry naturally.
+     */
+    public VirtualEntity resyncViewer(UUID viewerId) {
+        VirtualViewer viewer;
+        synchronized (this) {
+            ensureSpawned();
+            viewer = viewers.get(Objects.requireNonNull(viewerId, "viewerId"));
+            if (viewer == null) {
+                throw new IllegalArgumentException("Viewer is not registered: " + viewerId);
+            }
+        }
+        try {
+            destroyOn(viewer);
+            sendSpawn(viewer);
+        } catch (RuntimeException | Error failure) {
+            removeViewerAfterFailure(viewer, failure);
+            throw failure;
+        }
+        return this;
+    }
+
+    void replaceViewerTransport(VirtualViewer viewer) {
+        VirtualViewer previous;
+        boolean replay;
+        synchronized (this) {
+            previous = viewers.get(viewer.id());
+            if (previous == null || previous == viewer) {
+                return;
+            }
+            viewers.put(viewer.id(), viewer);
+            replay = spawned;
+        }
+        if (!replay) {
+            return;
+        }
+        try {
+            destroyOn(previous);
+            sendSpawn(viewer);
+        } catch (RuntimeException | Error failure) {
+            removeViewerAfterFailure(viewer, failure);
+            throw failure;
+        }
     }
 
     public VirtualEntity removeViewer(User user) {
@@ -470,9 +567,19 @@ public final class VirtualEntity {
         return removeViewer(user.getUUID());
     }
 
-    public synchronized VirtualEntity removeViewer(UUID viewerId) {
-        VirtualViewer viewer = viewers.remove(Objects.requireNonNull(viewerId, "viewerId"));
-        if (viewer != null && spawned) {
+    public VirtualEntity removeViewer(UUID viewerId) {
+        VirtualViewer viewer;
+        boolean destroy;
+        VirtualEntity currentVehicle;
+        synchronized (this) {
+            viewer = viewers.remove(Objects.requireNonNull(viewerId, "viewerId"));
+            destroy = viewer != null && spawned;
+            currentVehicle = vehicle;
+        }
+        if (viewer != null && currentVehicle != null) {
+            currentVehicle.syncPassengersForViewer(viewer);
+        }
+        if (destroy) {
             manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
             if (playerProfile != null) {
                 manager.send(viewer, playerInfoRemovePacket());
@@ -481,32 +588,70 @@ public final class VirtualEntity {
         return this;
     }
 
-    public synchronized VirtualEntity spawn(Location location) {
-        ensureActive();
-        if (spawned) {
-            throw new IllegalStateException("Entity is already spawned");
+    public VirtualEntity spawn(Location location) {
+        Location checked = validatedLocation(location);
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureActive();
+            if (spawned) {
+                throw new IllegalStateException("Entity is already spawned");
+            }
+            this.location = checked;
+            this.spawned = true;
+            currentViewers = List.copyOf(viewers.values());
         }
-        this.location = copy(Objects.requireNonNull(location, "location"));
-        this.spawned = true;
-        viewers.values().forEach(this::sendSpawn);
+        Throwable failure = null;
+        for (VirtualViewer viewer : currentViewers) {
+            try {
+                sendSpawn(viewer);
+            } catch (RuntimeException | Error viewerFailure) {
+                removeViewerAfterFailure(viewer, viewerFailure);
+                failure = appendFailure(failure, viewerFailure);
+            }
+        }
+        rethrow(failure);
         return this;
     }
 
-    public synchronized VirtualEntity despawn() {
-        if (spawned) {
-            broadcast(new WrapperPlayServerDestroyEntities(entityId));
-            if (playerProfile != null) {
-                broadcast(playerInfoRemovePacket());
+    public VirtualEntity despawn() {
+        List<VirtualViewer> currentViewers;
+        boolean player;
+        VirtualEntity currentVehicle;
+        synchronized (this) {
+            if (!spawned) {
+                return this;
             }
             spawned = false;
+            currentViewers = List.copyOf(viewers.values());
+            player = playerProfile != null;
+            currentVehicle = vehicle;
         }
+        Throwable failure = null;
+        for (VirtualViewer viewer : currentViewers) {
+            try {
+                if (currentVehicle != null) {
+                    currentVehicle.syncPassengersForViewer(viewer);
+                }
+                manager.send(viewer, new WrapperPlayServerDestroyEntities(entityId));
+                if (player) {
+                    manager.send(viewer, playerInfoRemovePacket());
+                }
+            } catch (RuntimeException | Error viewerFailure) {
+                failure = appendFailure(failure, viewerFailure);
+            }
+        }
+        rethrow(failure);
         return this;
     }
 
-    public synchronized VirtualEntity teleport(Location location) {
-        ensureSpawned();
-        this.location = copy(Objects.requireNonNull(location, "location"));
-        broadcast(this::teleportPacket);
+    public VirtualEntity teleport(Location location) {
+        List<ViewerPacket> packets;
+        synchronized (this) {
+            ensureSpawned();
+            this.location = validatedLocation(location);
+            packets = viewerPackets(this::teleportPacket);
+        }
+        send(packets);
         return this;
     }
 
@@ -520,28 +665,32 @@ public final class VirtualEntity {
      */
     public synchronized VirtualEntity setLocationSnapshot(Location location) {
         ensureSpawned();
-        this.location = copy(Objects.requireNonNull(location, "location"));
+        this.location = validatedLocation(location);
         return this;
     }
 
     /** Applies a protocol relative move; each delta must be within the encodable range. */
-    public synchronized VirtualEntity move(double deltaX, double deltaY, double deltaZ, boolean onGround) {
-        ensureSpawned();
-        validateRelativeDelta(deltaX, deltaY, deltaZ);
-        this.location = new Location(
-                location.getX() + deltaX,
-                location.getY() + deltaY,
-                location.getZ() + deltaZ,
-                location.getYaw(),
-                location.getPitch()
-        );
-        this.onGround = onGround;
-        broadcast(new WrapperPlayServerEntityRelativeMove(entityId, deltaX, deltaY, deltaZ, onGround));
+    public VirtualEntity move(double deltaX, double deltaY, double deltaZ, boolean onGround) {
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureSpawned();
+            validateRelativeDelta(deltaX, deltaY, deltaZ);
+            this.location = new Location(
+                    location.getX() + deltaX,
+                    location.getY() + deltaY,
+                    location.getZ() + deltaZ,
+                    location.getYaw(),
+                    location.getPitch()
+            );
+            this.onGround = onGround;
+            currentViewers = List.copyOf(viewers.values());
+        }
+        broadcast(currentViewers, new WrapperPlayServerEntityRelativeMove(entityId, deltaX, deltaY, deltaZ, onGround));
         return this;
     }
 
     /** Applies a combined protocol relative move and body rotation. */
-    public synchronized VirtualEntity moveAndRotate(
+    public VirtualEntity moveAndRotate(
             double deltaX,
             double deltaY,
             double deltaZ,
@@ -549,17 +698,23 @@ public final class VirtualEntity {
             float pitch,
             boolean onGround
     ) {
-        ensureSpawned();
-        validateRelativeDelta(deltaX, deltaY, deltaZ);
-        this.location = new Location(
-                location.getX() + deltaX,
-                location.getY() + deltaY,
-                location.getZ() + deltaZ,
-                yaw,
-                pitch
-        );
-        this.onGround = onGround;
-        broadcast(new WrapperPlayServerEntityRelativeMoveAndRotation(
+        validateFinite(yaw, "yaw");
+        validateFinite(pitch, "pitch");
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureSpawned();
+            validateRelativeDelta(deltaX, deltaY, deltaZ);
+            this.location = new Location(
+                    location.getX() + deltaX,
+                    location.getY() + deltaY,
+                    location.getZ() + deltaZ,
+                    yaw,
+                    pitch
+            );
+            this.onGround = onGround;
+            currentViewers = List.copyOf(viewers.values());
+        }
+        broadcast(currentViewers, new WrapperPlayServerEntityRelativeMoveAndRotation(
                 entityId,
                 deltaX,
                 deltaY,
@@ -572,105 +727,191 @@ public final class VirtualEntity {
     }
 
     /** Uses the smallest correct movement packet for a new absolute location. */
-    public synchronized VirtualEntity updateLocation(Location target, boolean onGround) {
-        ensureSpawned();
-        Objects.requireNonNull(target, "target");
-        double deltaX = target.getX() - location.getX();
-        double deltaY = target.getY() - location.getY();
-        double deltaZ = target.getZ() - location.getZ();
-        boolean moved = deltaX != 0 || deltaY != 0 || deltaZ != 0;
-        boolean rotated = target.getYaw() != location.getYaw() || target.getPitch() != location.getPitch();
-
-        if (moved && !relativeDeltaFits(deltaX, deltaY, deltaZ)) {
+    public VirtualEntity updateLocation(Location target, boolean onGround) {
+        Location checked = validatedLocation(target);
+        List<ViewerPacket> packets;
+        synchronized (this) {
+            ensureSpawned();
+            double deltaX = checked.getX() - location.getX();
+            double deltaY = checked.getY() - location.getY();
+            double deltaZ = checked.getZ() - location.getZ();
+            boolean moved = deltaX != 0 || deltaY != 0 || deltaZ != 0;
+            boolean rotated = checked.getYaw() != location.getYaw() || checked.getPitch() != location.getPitch();
             this.onGround = onGround;
-            return teleport(target);
+            if (moved && !relativeDeltaFits(deltaX, deltaY, deltaZ)) {
+                this.location = checked;
+                packets = viewerPackets(this::teleportPacket);
+            } else if (moved && rotated) {
+                this.location = checked;
+                PacketWrapper<?> packet = new WrapperPlayServerEntityRelativeMoveAndRotation(
+                        entityId, deltaX, deltaY, deltaZ, checked.getYaw(), checked.getPitch(), onGround);
+                packets = viewerPackets(viewer -> packet);
+            } else if (moved) {
+                this.location = new Location(
+                        checked.getPosition(), location.getYaw(), location.getPitch());
+                PacketWrapper<?> packet = new WrapperPlayServerEntityRelativeMove(
+                        entityId, deltaX, deltaY, deltaZ, onGround);
+                packets = viewerPackets(viewer -> packet);
+            } else if (rotated) {
+                this.location.setYaw(checked.getYaw());
+                this.location.setPitch(checked.getPitch());
+                PacketWrapper<?> packet = new WrapperPlayServerEntityRotation(
+                        entityId, checked.getYaw(), checked.getPitch(), onGround);
+                packets = viewerPackets(viewer -> packet);
+            } else {
+                packets = List.of();
+            }
         }
-        if (moved && rotated) {
-            return moveAndRotate(deltaX, deltaY, deltaZ, target.getYaw(), target.getPitch(), onGround);
-        }
-        if (moved) {
-            return move(deltaX, deltaY, deltaZ, onGround);
-        }
-        if (rotated) {
-            return rotate(target.getYaw(), target.getPitch(), onGround);
-        }
-        this.onGround = onGround;
+        send(packets);
         return this;
     }
 
-    public synchronized VirtualEntity rotate(float yaw, float pitch, boolean onGround) {
-        ensureSpawned();
-        this.location.setYaw(yaw);
-        this.location.setPitch(pitch);
-        this.onGround = onGround;
-        broadcast(new WrapperPlayServerEntityRotation(entityId, yaw, pitch, onGround));
+    public VirtualEntity rotate(float yaw, float pitch, boolean onGround) {
+        validateFinite(yaw, "yaw");
+        validateFinite(pitch, "pitch");
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureSpawned();
+            this.location.setYaw(yaw);
+            this.location.setPitch(pitch);
+            this.onGround = onGround;
+            currentViewers = List.copyOf(viewers.values());
+        }
+        broadcast(currentViewers, new WrapperPlayServerEntityRotation(entityId, yaw, pitch, onGround));
         return this;
     }
 
-    public synchronized VirtualEntity rotateHead(float headYaw) {
-        ensureSpawned();
-        this.headYaw = headYaw;
-        broadcast(new WrapperPlayServerEntityHeadLook(entityId, headYaw));
+    public VirtualEntity rotateHead(float headYaw) {
+        validateFinite(headYaw, "headYaw");
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureSpawned();
+            this.headYaw = headYaw;
+            currentViewers = List.copyOf(viewers.values());
+        }
+        broadcast(currentViewers, new WrapperPlayServerEntityHeadLook(entityId, headYaw));
         return this;
     }
 
-    public synchronized VirtualEntity velocity(Vector3d velocity) {
-        ensureSpawned();
-        this.velocity = Objects.requireNonNull(velocity, "velocity");
-        broadcast(new WrapperPlayServerEntityVelocity(entityId, velocity));
+    public VirtualEntity velocity(Vector3d velocity) {
+        Vector3d checked = validatedVector(velocity, "velocity");
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            ensureSpawned();
+            this.velocity = checked;
+            currentViewers = List.copyOf(viewers.values());
+        }
+        broadcast(currentViewers, new WrapperPlayServerEntityVelocity(entityId, checked));
         return this;
     }
 
-    public synchronized VirtualEntity syncMetadata() {
-        ensureSpawned();
-        if (metadata != null && !metadata.entityData().isEmpty()) {
-            broadcast(new WrapperPlayServerEntityMetadata(entityId, metadata.entityData()));
+    public VirtualEntity syncMetadata() {
+        List<VirtualViewer> currentViewers;
+        List<com.github.retrooper.packetevents.protocol.entity.data.EntityData<?>> entityData;
+        synchronized (this) {
+            ensureSpawned();
+            entityData = metadata == null ? List.of() : metadata.entityData();
+            currentViewers = entityData.isEmpty() ? List.of() : List.copyOf(viewers.values());
+        }
+        if (!entityData.isEmpty()) {
+            broadcast(currentViewers, new WrapperPlayServerEntityMetadata(entityId, entityData));
         }
         return this;
     }
 
-    public synchronized void remove() {
-        if (removed) {
-            return;
+    public void remove() {
+        synchronized (this) {
+            if (removed) {
+                return;
+            }
+            removed = true;
         }
-        despawn();
-        detachPassengerRelationships();
-        viewers.clear();
-        interactionListeners.clear();
-        removed = true;
-        manager.unregister(this);
+        Throwable failure = null;
+        try {
+            despawn();
+        } catch (RuntimeException | Error despawnFailure) {
+            failure = despawnFailure;
+        }
+        try {
+            detachPassengerRelationships();
+        } catch (RuntimeException | Error relationshipFailure) {
+            failure = appendFailure(failure, relationshipFailure);
+        } finally {
+            synchronized (this) {
+                viewers.clear();
+                interactionListeners.clear();
+            }
+            manager.unregister(this);
+        }
+        rethrow(failure);
     }
 
     private void sendSpawn(VirtualViewer viewer) {
-        if (playerProfile != null) {
-            manager.send(viewer, playerInfoAddPacket());
-        }
-        ServerVersion version = serverVersion();
-        List<com.github.retrooper.packetevents.protocol.entity.data.EntityData<?>> entityData =
-                metadata == null ? List.of() : metadata.entityData();
-        boolean metadataIncludedInSpawn = metadataIncludedInSpawn(version);
-        manager.send(viewer, spawnPacket(version, metadataIncludedInSpawn ? entityData : List.of()));
-        if (!metadataIncludedInSpawn && !entityData.isEmpty()) {
-            manager.send(viewer, new WrapperPlayServerEntityMetadata(entityId, entityData));
-        }
-        if (playerProfile != null) {
-            manager.send(
-                    viewer,
-                    new WrapperPlayServerEntityRotation(entityId, location.getYaw(), location.getPitch(), onGround)
-            );
-            manager.send(viewer, new WrapperPlayServerEntityHeadLook(entityId, headYaw));
-            if (!listed && !modernPlayerInfo()) {
-                manager.send(viewer, playerInfoRemovePacket());
+        List<PacketWrapper<?>> packets = new java.util.ArrayList<>();
+        VirtualEntity currentVehicle;
+        synchronized (this) {
+            ensureSpawned();
+            if (!viewers.containsKey(viewer.id())) {
+                return;
             }
+            if (playerProfile != null) {
+                packets.add(playerInfoAddPacket());
+            }
+            ServerVersion version = serverVersion();
+            List<com.github.retrooper.packetevents.protocol.entity.data.EntityData<?>> entityData =
+                    metadata == null ? List.of() : metadata.entityData();
+            boolean metadataIncludedInSpawn = metadataIncludedInSpawn(version);
+            packets.add(spawnPacket(version, metadataIncludedInSpawn ? entityData : List.of()));
+            if (!metadataIncludedInSpawn && !entityData.isEmpty()) {
+                packets.add(new WrapperPlayServerEntityMetadata(entityId, entityData));
+            }
+            if (playerProfile != null) {
+                packets.add(new WrapperPlayServerEntityRotation(
+                        entityId, location.getYaw(), location.getPitch(), onGround));
+                packets.add(new WrapperPlayServerEntityHeadLook(entityId, headYaw));
+                if (!listed && !modernPlayerInfo()) {
+                    packets.add(playerInfoRemovePacket());
+                }
+            }
+            for (Map.Entry<EquipmentSlot, ItemStack> entry : equipment.entrySet()) {
+                packets.add(equipmentPacket(entry.getKey(), entry.getValue()));
+            }
+            if (!attributes.isEmpty()) {
+                packets.add(new WrapperPlayServerUpdateAttributes(entityId, List.copyOf(attributes.values())));
+            }
+            currentVehicle = vehicle;
         }
-        for (Map.Entry<EquipmentSlot, ItemStack> entry : equipment.entrySet()) {
-            manager.send(viewer, equipmentPacket(entry.getKey(), entry.getValue()));
+        for (PacketWrapper<?> packet : packets) {
+            manager.send(viewer, packet);
         }
-        if (!attributes.isEmpty()) {
-            manager.send(viewer, new WrapperPlayServerUpdateAttributes(entityId, List.copyOf(attributes.values())));
+        WrapperPlayServerSetPassengers passengerState = passengersPacket(viewer);
+        if (passengerState.getPassengers().length > 0) {
+            manager.send(viewer, passengerState);
         }
-        if (!passengers.isEmpty()) {
-            manager.send(viewer, passengersPacket());
+        if (currentVehicle != null) {
+            currentVehicle.syncPassengersForViewer(viewer);
+        }
+    }
+
+    private void destroyOn(VirtualViewer viewer) {
+        manager.sendDirect(viewer, new WrapperPlayServerDestroyEntities(entityId));
+        if (playerProfile != null) {
+            manager.sendDirect(viewer, playerInfoRemovePacket());
+        }
+    }
+
+    private void removeViewerAfterFailure(VirtualViewer viewer, Throwable failure) {
+        VirtualEntity currentVehicle;
+        synchronized (this) {
+            viewers.remove(viewer.id(), viewer);
+            currentVehicle = vehicle;
+        }
+        if (currentVehicle != null) {
+            try {
+                currentVehicle.syncPassengersForViewer(viewer);
+            } catch (RuntimeException | Error relationshipFailure) {
+                failure.addSuppressed(relationshipFailure);
+            }
         }
     }
 
@@ -745,11 +986,15 @@ public final class VirtualEntity {
             WrapperPlayServerPlayerInfoUpdate.Action modernAction,
             WrapperPlayServerPlayerInfo.Action legacyAction
     ) {
-        if (spawned) {
-            broadcast(modernPlayerInfo()
+        PacketWrapper<?> packet;
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            packet = spawned ? modernPlayerInfo()
                     ? playerInfoUpdatePacket(EnumSet.of(modernAction))
-                    : legacyPlayerInfoPacket(legacyAction));
+                    : legacyPlayerInfoPacket(legacyAction) : null;
+            currentViewers = packet == null ? List.of() : List.copyOf(viewers.values());
         }
+        broadcast(currentViewers, packet);
     }
 
     private PacketWrapper<?> playerInfoAddPacket() {
@@ -807,10 +1052,14 @@ public final class VirtualEntity {
         return PacketEvents.getAPI().getServerManager().getVersion();
     }
 
-    private WrapperPlayServerSetPassengers passengersPacket() {
+    private WrapperPlayServerSetPassengers passengersPacket(VirtualViewer viewer) {
         return new WrapperPlayServerSetPassengers(
                 entityId,
-                passengers.stream().mapToInt(VirtualEntity::entityId).toArray()
+                passengers.stream()
+                        .filter(VirtualEntity::isSpawned)
+                        .filter(passenger -> passenger.hasViewer(viewer.id()))
+                        .mapToInt(VirtualEntity::entityId)
+                        .toArray()
         );
     }
 
@@ -826,9 +1075,25 @@ public final class VirtualEntity {
     }
 
     private void syncPassengersIfSpawned() {
-        if (spawned) {
-            broadcast(passengersPacket());
+        List<VirtualViewer> currentViewers;
+        synchronized (this) {
+            if (!spawned) {
+                return;
+            }
+            currentViewers = List.copyOf(viewers.values());
         }
+        for (VirtualViewer viewer : currentViewers) {
+            manager.send(viewer, passengersPacket(viewer));
+        }
+    }
+
+    private void syncPassengersForViewer(VirtualViewer viewer) {
+        synchronized (this) {
+            if (!spawned || !viewers.containsKey(viewer.id())) {
+                return;
+            }
+        }
+        manager.send(viewer, passengersPacket(viewer));
     }
 
     private void detachPassengerRelationships() {
@@ -851,12 +1116,21 @@ public final class VirtualEntity {
         }
     }
 
-    private void broadcast(PacketWrapper<?> packet) {
-        viewers.values().forEach(viewer -> manager.send(viewer, packet));
+    private void broadcast(Collection<VirtualViewer> recipients, PacketWrapper<?> packet) {
+        if (packet == null) {
+            return;
+        }
+        recipients.forEach(viewer -> manager.send(viewer, packet));
     }
 
-    private void broadcast(Function<VirtualViewer, PacketWrapper<?>> packetFactory) {
-        viewers.values().forEach(viewer -> manager.send(viewer, packetFactory.apply(viewer)));
+    private List<ViewerPacket> viewerPackets(Function<VirtualViewer, PacketWrapper<?>> packetFactory) {
+        return viewers.values().stream()
+                .map(viewer -> new ViewerPacket(viewer, packetFactory.apply(viewer)))
+                .toList();
+    }
+
+    private void send(List<ViewerPacket> packets) {
+        packets.forEach(packet -> manager.send(packet.viewer(), packet.packet()));
     }
 
     void dispatchInteraction(VirtualEntityInteraction interaction) {
@@ -868,6 +1142,9 @@ public final class VirtualEntity {
     private void ensureActive() {
         if (removed) {
             throw new IllegalStateException("Entity has been removed");
+        }
+        if (manager.isClosed()) {
+            throw new IllegalStateException("VirtualEntityManager is closed");
         }
     }
 
@@ -886,6 +1163,50 @@ public final class VirtualEntity {
 
     private static Location copy(Location location) {
         return new Location(location.getPosition(), location.getYaw(), location.getPitch());
+    }
+
+    private static Location validatedLocation(Location location) {
+        Objects.requireNonNull(location, "location");
+        validateFinite(location.getX(), "location.x");
+        validateFinite(location.getY(), "location.y");
+        validateFinite(location.getZ(), "location.z");
+        validateFinite(location.getYaw(), "location.yaw");
+        validateFinite(location.getPitch(), "location.pitch");
+        return copy(location);
+    }
+
+    private static Vector3d validatedVector(Vector3d vector, String name) {
+        Objects.requireNonNull(vector, name);
+        validateFinite(vector.getX(), name + ".x");
+        validateFinite(vector.getY(), name + ".y");
+        validateFinite(vector.getZ(), name + ".z");
+        return vector;
+    }
+
+    private static void validateFinite(double value, String name) {
+        if (!Double.isFinite(value)) {
+            throw new IllegalArgumentException(name + " must be finite");
+        }
+    }
+
+    private static Throwable appendFailure(Throwable current, Throwable added) {
+        if (current == null) {
+            return added;
+        }
+        current.addSuppressed(added);
+        return current;
+    }
+
+    private static void rethrow(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+    }
+
+    private record ViewerPacket(VirtualViewer viewer, PacketWrapper<?> packet) {
     }
 
     private static UserProfile validatedProfile(UserProfile profile) {
@@ -986,11 +1307,12 @@ public final class VirtualEntity {
         }
 
         public Builder velocity(Vector3d velocity) {
-            this.velocity = Objects.requireNonNull(velocity, "velocity");
+            this.velocity = validatedVector(velocity, "velocity");
             return this;
         }
 
         public Builder headYaw(float headYaw) {
+            validateFinite(headYaw, "headYaw");
             this.headYaw = headYaw;
             return this;
         }

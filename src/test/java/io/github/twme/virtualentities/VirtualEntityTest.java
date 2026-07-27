@@ -47,6 +47,7 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -129,7 +130,10 @@ class VirtualEntityTest {
                 .addPassenger(passenger);
 
         List<PacketWrapper<?>> packets = new ArrayList<>();
-        vehicle.addViewer(VirtualViewer.of(UUID.randomUUID(), packets::add));
+        VirtualViewer viewer = VirtualViewer.of(UUID.randomUUID(), packets::add);
+        passenger.addViewer(viewer).spawn(new Location(0, 65, 0, 0, 0));
+        packets.clear();
+        vehicle.addViewer(viewer);
         vehicle.spawn(new Location(0, 64, 0, 0, 0));
 
         assertEquals(4, packets.size());
@@ -154,6 +158,95 @@ class VirtualEntityTest {
     }
 
     @Test
+    void replaysPassengerStateForLateAndAsymmetricViewers() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(350));
+        VirtualEntity vehicle = manager.entity(testType()).build();
+        VirtualEntity passenger = manager.entity(testType()).build();
+        UUID sharedId = UUID.randomUUID();
+        List<PacketWrapper<?>> sharedPackets = new ArrayList<>();
+        VirtualViewer sharedViewer = VirtualViewer.of(sharedId, sharedPackets::add);
+        UUID vehicleOnlyId = UUID.randomUUID();
+        List<PacketWrapper<?>> vehicleOnlyPackets = new ArrayList<>();
+        VirtualViewer vehicleOnly = VirtualViewer.of(vehicleOnlyId, vehicleOnlyPackets::add);
+
+        vehicle.addViewer(sharedViewer).addViewer(vehicleOnly).spawn(new Location(0, 64, 0, 0, 0));
+        passenger.spawn(new Location(0, 65, 0, 0, 0));
+        vehicle.addPassenger(passenger);
+
+        WrapperPlayServerSetPassengers vehicleOnlyState = assertInstanceOf(
+                WrapperPlayServerSetPassengers.class,
+                vehicleOnlyPackets.get(vehicleOnlyPackets.size() - 1)
+        );
+        assertArrayEquals(new int[0], vehicleOnlyState.getPassengers());
+
+        sharedPackets.clear();
+        passenger.addViewer(sharedViewer);
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, sharedPackets.get(0));
+        WrapperPlayServerSetPassengers mounted = assertInstanceOf(
+                WrapperPlayServerSetPassengers.class,
+                sharedPackets.get(sharedPackets.size() - 1)
+        );
+        assertEquals(vehicle.entityId(), mounted.getEntityId());
+        assertArrayEquals(new int[]{passenger.entityId()}, mounted.getPassengers());
+
+        sharedPackets.clear();
+        passenger.removeViewer(sharedId);
+        WrapperPlayServerSetPassengers unmounted = assertInstanceOf(
+                WrapperPlayServerSetPassengers.class,
+                sharedPackets.get(0)
+        );
+        assertArrayEquals(new int[0], unmounted.getPassengers());
+        assertInstanceOf(WrapperPlayServerDestroyEntities.class, sharedPackets.get(1));
+
+        sharedPackets.clear();
+        passenger.addViewer(sharedViewer);
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, sharedPackets.get(0));
+        assertArrayEquals(
+                new int[]{passenger.entityId()},
+                assertInstanceOf(
+                        WrapperPlayServerSetPassengers.class,
+                        sharedPackets.get(sharedPackets.size() - 1)
+                ).getPassengers()
+        );
+
+        sharedPackets.clear();
+        passenger.despawn();
+        assertArrayEquals(
+                new int[0],
+                assertInstanceOf(WrapperPlayServerSetPassengers.class, sharedPackets.get(0)).getPassengers()
+        );
+        passenger.spawn(new Location(0, 65, 0, 0, 0));
+        assertArrayEquals(
+                new int[]{passenger.entityId()},
+                assertInstanceOf(
+                        WrapperPlayServerSetPassengers.class,
+                        sharedPackets.get(sharedPackets.size() - 1)
+                ).getPassengers()
+        );
+    }
+
+    @Test
+    void excludesUnsupportedPassengerTypesFromViewerState() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(375));
+        List<PacketWrapper<?>> packets = new ArrayList<>();
+        VirtualViewer legacy = VirtualViewer.of(
+                UUID.randomUUID(), ClientVersion.V_1_19_3, packets::add);
+        VirtualEntity vehicle = manager.entity(EntityTypes.PIG).build()
+                .addViewer(legacy).spawn(new Location(0, 64, 0, 0, 0));
+        VirtualEntity unsupportedPassenger = manager.entity(EntityTypes.TEXT_DISPLAY).build()
+                .addViewer(legacy).spawn(new Location(0, 65, 0, 0, 0));
+        packets.clear();
+
+        vehicle.addPassenger(unsupportedPassenger);
+
+        assertFalse(unsupportedPassenger.hasViewer(legacy.id()));
+        assertArrayEquals(
+                new int[0],
+                assertInstanceOf(WrapperPlayServerSetPassengers.class, packets.get(0)).getPassengers()
+        );
+    }
+
+    @Test
     void resolvesBuilderMetadataFromServerVersionAndEntityType() {
         EntityType pig = namedType("pig");
         VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(400))
@@ -169,10 +262,13 @@ class VirtualEntityTest {
     void sendsStateChangesImmediatelyAndValidatesPassengerOwnership() {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(500));
         List<PacketWrapper<?>> packets = new ArrayList<>();
+        VirtualViewer viewer = VirtualViewer.of(UUID.randomUUID(), packets::add);
         VirtualEntity vehicle = manager.entity(testType()).build()
-                .addViewer(VirtualViewer.of(UUID.randomUUID(), packets::add))
+                .addViewer(viewer)
                 .spawn(new Location(0, 64, 0, 0, 0));
-        VirtualEntity passenger = manager.entity(testType()).build();
+        VirtualEntity passenger = manager.entity(testType()).build()
+                .addViewer(viewer)
+                .spawn(new Location(0, 65, 0, 0, 0));
         ItemStack helmet = mock(ItemStack.class);
         Attribute maxHealth = mock(Attribute.class);
         when(maxHealth.getDefaultValue()).thenReturn(20.0);
@@ -339,6 +435,42 @@ class VirtualEntityTest {
     }
 
     @Test
+    void supportsConcurrentPassengerViewerReconciliation() {
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1125));
+            VirtualViewer viewer = VirtualViewer.of(UUID.randomUUID(), packet -> { });
+            VirtualEntity vehicle = manager.entity(testType()).build()
+                    .addViewer(viewer).spawn(new Location(0, 64, 0, 0, 0));
+            VirtualEntity passenger = manager.entity(testType()).build()
+                    .spawn(new Location(0, 65, 0, 0, 0));
+            vehicle.addPassenger(passenger);
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                var passengerUpdates = executor.submit(() -> {
+                    for (int index = 0; index < 200; index++) {
+                        passenger.addViewer(viewer);
+                        passenger.removeViewer(viewer.id());
+                    }
+                });
+                var vehicleUpdates = executor.submit(() -> {
+                    for (int index = 0; index < 200; index++) {
+                        vehicle.removeViewer(viewer.id());
+                        vehicle.addViewer(viewer);
+                    }
+                });
+                passengerUpdates.get();
+                vehicleUpdates.get();
+            } finally {
+                executor.shutdownNow();
+            }
+
+            assertEquals(vehicle, passenger.vehicle().orElseThrow());
+            assertEquals(List.of(passenger), vehicle.passengers());
+        });
+    }
+
+    @Test
     void selectsRelativeMovementOrTeleportFromAbsoluteUpdates() {
         List<PacketWrapper<?>> packets = new ArrayList<>();
         VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1100))
@@ -442,6 +574,8 @@ class VirtualEntityTest {
         assertTrue(happyGhast.supports(ClientVersion.V_1_21_6));
         assertFalse(unregistered.supports(ClientVersion.V_1_21_11));
 
+        passenger.addViewer(modern).spawn(new Location(0, 65, 0, 0, 0));
+        modernPackets.clear();
         textDisplay.addViewer(legacy).addViewer(legacyUser).addViewer(modern)
                 .spawn(new Location(0, 64, 0, 0, 0));
 
@@ -507,6 +641,129 @@ class VirtualEntityTest {
         when(stranger.getUUID()).thenReturn(UUID.randomUUID());
         assertTrue(manager.handleInteraction(stranger, packet).isEmpty());
         assertTrue(manager.handleInteraction(actor, new WrapperPlayClientAttack(999_999)).isEmpty());
+    }
+
+    @Test
+    void rollsBackFailedViewerDeliveryAndAllowsNaturalRetry() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1400));
+        VirtualEntity entity = manager.entity(testType()).build().spawn(new Location(0, 64, 0, 0, 0));
+        UUID viewerId = UUID.randomUUID();
+
+        assertThrows(IllegalStateException.class, () -> entity.addViewer(VirtualViewer.of(viewerId, packet -> {
+            throw new IllegalStateException("transport failed");
+        })));
+        assertFalse(entity.hasViewer(viewerId));
+
+        List<PacketWrapper<?>> retryPackets = new ArrayList<>();
+        entity.addViewer(VirtualViewer.of(viewerId, retryPackets::add));
+        assertTrue(entity.hasViewer(viewerId));
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, retryPackets.get(0));
+
+        retryPackets.clear();
+        entity.resyncViewer(viewerId);
+        assertInstanceOf(WrapperPlayServerDestroyEntities.class, retryPackets.get(0));
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, retryPackets.get(1));
+    }
+
+    @Test
+    void isolatesSpawnFailuresPerViewer() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1450));
+        UUID failedId = UUID.randomUUID();
+        UUID successfulId = UUID.randomUUID();
+        List<PacketWrapper<?>> successfulPackets = new ArrayList<>();
+        VirtualEntity entity = manager.entity(testType()).build()
+                .addViewer(VirtualViewer.of(failedId, packet -> {
+                    throw new IllegalStateException("transport failed");
+                }))
+                .addViewer(VirtualViewer.of(successfulId, successfulPackets::add));
+
+        assertThrows(IllegalStateException.class, () -> entity.spawn(new Location(0, 64, 0, 0, 0)));
+        assertTrue(entity.isSpawned());
+        assertFalse(entity.hasViewer(failedId));
+        assertTrue(entity.hasViewer(successfulId));
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, successfulPackets.get(0));
+    }
+
+    @Test
+    void neverInvokesTransportWhileHoldingEntityMonitor() {
+        AtomicReference<VirtualEntity> reference = new AtomicReference<>();
+        List<PacketWrapper<?>> packets = new ArrayList<>();
+        VirtualViewer viewer = VirtualViewer.of(UUID.randomUUID(), packet -> {
+            assertFalse(Thread.holdsLock(reference.get()));
+            packets.add(packet);
+        });
+        VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1500))
+                .entity(testType()).build();
+        reference.set(entity);
+
+        entity.addViewer(viewer).spawn(new Location(0, 64, 0, 0, 0));
+        entity.teleport(new Location(1, 64, 0, 0, 0));
+        entity.setEquipment(EquipmentSlot.HELMET, ItemStack.EMPTY);
+        entity.despawn();
+
+        assertFalse(packets.isEmpty());
+    }
+
+    @Test
+    void validatesFiniteWireValuesAndInteractionAuthorization() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1550));
+        UUID actorId = UUID.randomUUID();
+        User actor = mock(User.class);
+        when(actor.getUUID()).thenReturn(actorId);
+        VirtualEntity entity = manager.entity(testType()).build()
+                .addViewer(VirtualViewer.of(actorId, packet -> { }))
+                .spawn(new Location(0, 64, 0, 0, 0));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> entity.teleport(new Location(Double.NaN, 64, 0, 0, 0)));
+        assertThrows(IllegalArgumentException.class,
+                () -> entity.velocity(new Vector3d(0, Double.POSITIVE_INFINITY, 0)));
+        assertThrows(IllegalArgumentException.class,
+                () -> entity.rotate(Float.NaN, 0, false));
+
+        manager.interactionValidator(interaction -> false);
+        assertTrue(manager.handleInteraction(actor, new WrapperPlayClientAttack(entity.entityId())).isEmpty());
+
+        manager.interactionValidator(interaction -> true);
+        WrapperPlayClientInteractEntity nonFinite = new WrapperPlayClientInteractEntity(
+                entity.entityId(),
+                WrapperPlayClientInteractEntity.InteractAction.INTERACT_AT,
+                new Vector3d(Double.NaN, 0, 0),
+                InteractionHand.MAIN_HAND,
+                false
+        );
+        assertTrue(manager.handleInteraction(actor, nonFinite).isEmpty());
+    }
+
+    @Test
+    void managerCloseIsTerminal() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1600));
+        manager.entity(testType()).build();
+
+        manager.close();
+        manager.close();
+
+        assertTrue(manager.isClosed());
+        assertTrue(manager.entities().isEmpty());
+        assertThrows(IllegalStateException.class, () -> manager.entity(testType()));
+        assertThrows(IllegalStateException.class, () -> manager.bundle(() -> { }));
+    }
+
+    @Test
+    void managerCloseCleansEveryEntityWhenATransportFails() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1650));
+        manager.entity(testType()).build()
+                .addViewer(VirtualViewer.of(UUID.randomUUID(), packet -> {
+                    if (packet instanceof WrapperPlayServerDestroyEntities) {
+                        throw new IllegalStateException("disconnect during close");
+                    }
+                }))
+                .spawn(new Location(0, 64, 0, 0, 0));
+        manager.entity(testType()).build().spawn(new Location(1, 64, 0, 0, 0));
+
+        assertThrows(IllegalStateException.class, manager::close);
+        assertTrue(manager.isClosed());
+        assertTrue(manager.entities().isEmpty());
     }
 
     private static EntityType namedType(String name) {

@@ -11,6 +11,15 @@ const manifestPath = path.resolve(
 )
 
 const errors = []
+const javaIdentifier = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+const javaKeywords = new Set([
+  'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class', 'const',
+  'continue', 'default', 'do', 'double', 'else', 'enum', 'extends', 'final', 'finally', 'float',
+  'for', 'goto', 'if', 'implements', 'import', 'instanceof', 'int', 'interface', 'long', 'native',
+  'new', 'package', 'private', 'protected', 'public', 'return', 'short', 'static', 'strictfp',
+  'super', 'switch', 'synchronized', 'this', 'throw', 'throws', 'transient', 'try', 'void',
+  'volatile', 'while', 'true', 'false', 'null', 'record', 'sealed', 'permits', 'yield', 'var'
+])
 const readJson = file => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -70,9 +79,19 @@ console.log(`Verified ${manifest.flags.length} reviewed semantic metadata flags 
 
 function validateSnapshot(version, snapshot) {
   const entityNames = new Set(Object.keys(snapshot))
+  const generatedClassNames = new Map()
   if (!entityNames.has('Entity')) errors.push(`${version}: root Entity class is missing`)
 
   for (const [entityName, entity] of Object.entries(snapshot)) {
+    const generatedClassName = javaClassName(entityName)
+    if (!isJavaIdentifier(generatedClassName)) {
+      errors.push(`${version}:${entityName} normalizes to unsafe Java class name ${generatedClassName}`)
+    }
+    const previousEntity = generatedClassNames.get(generatedClassName)
+    if (previousEntity && previousEntity !== entityName) {
+      errors.push(`${version}: entity names ${previousEntity} and ${entityName} normalize to ${generatedClassName}`)
+    }
+    generatedClassNames.set(generatedClassName, entityName)
     if (!entity || typeof entity !== 'object' || Array.isArray(entity)) {
       errors.push(`${version}:${entityName} must be an object`)
       continue
@@ -102,6 +121,8 @@ function validateSnapshot(version, snapshot) {
       }
       if (typeof field.fieldName !== 'string' || field.fieldName.trim() === '') {
         errors.push(`${version}:${entityName} has an invalid fieldName`)
+      } else if (!isJavaIdentifier(field.fieldName)) {
+        errors.push(`${version}:${entityName}.${field.fieldName} is not a safe Java constant identifier`)
       } else if (!localNames.add(field.fieldName)) {
         errors.push(`${version}:${entityName} declares field ${field.fieldName} more than once`)
       }
@@ -152,6 +173,27 @@ function validateSnapshot(version, snapshot) {
   if (textDisplay && isNumeric(version) && compareVersions(version, '1.19.4') < 0) {
     errors.push(`${version}:Text Display appears before its 1.19.4 introduction`)
   }
+}
+
+function isJavaIdentifier(value) {
+  return javaIdentifier.test(value) && !javaKeywords.has(value)
+}
+
+function javaClassName(entityName) {
+  let result = ''
+  let uppercase = true
+  for (const character of entityName) {
+    if (!/[A-Za-z0-9]/.test(character)) {
+      uppercase = true
+    } else if (uppercase) {
+      result += character.toUpperCase()
+      uppercase = false
+    } else {
+      result += character
+    }
+  }
+  if (result === '' || /^[0-9]/.test(result)) result = `Entity${result}`
+  return result
 }
 
 function validateSemanticManifest(value, snapshotsByVersion) {

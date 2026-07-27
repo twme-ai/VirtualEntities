@@ -209,7 +209,26 @@ public final class EntityMetadataRegistry {
         try (InputStream input = resource("entity-data/" + version + ".json");
              InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
             Map<String, RawEntity> result = GSON.fromJson(reader, ENTITY_MAP_TYPE);
-            return result == null ? Map.of() : Map.copyOf(result);
+            if (result == null) {
+                return Map.of();
+            }
+            for (Map.Entry<String, RawEntity> entry : result.entrySet()) {
+                if (entry.getValue().fields == null) {
+                    continue;
+                }
+                for (MetadataField field : entry.getValue().fields) {
+                    try {
+                        EntityMetadataTypes.require(field.dataType());
+                    } catch (IllegalArgumentException exception) {
+                        throw new IllegalStateException(
+                                "Unsupported metadata type in " + version + ":"
+                                        + entry.getKey() + "." + field.fieldName(),
+                                exception
+                        );
+                    }
+                }
+            }
+            return Map.copyOf(result);
         } catch (IOException exception) {
             throw new IllegalStateException("Cannot load bundled entity-data for " + version, exception);
         }

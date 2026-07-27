@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeAll;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -126,6 +127,36 @@ class VirtualAudienceTrackerTest {
         assertInstanceOf(WrapperPlayServerDestroyEntities.class, packets.get(1));
         tracker.reconcile(List.of(legacy));
         assertEquals(2, packets.size());
+    }
+
+    @Test
+    void replacesTransportWhenAReusedCandidateChangesConnectionIdentity() {
+        VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1290))
+                .entity(EntityTypes.PIG).build().spawn(new Location(0, 64, 0, 0, 0));
+        Candidate candidate = candidate(true);
+        AtomicReference<Object> connection = new AtomicReference<>(new Object());
+        AtomicReference<List<PacketWrapper<?>>> destination = new AtomicReference<>(candidate.packets());
+        VirtualAudienceTracker<Candidate> tracker = VirtualAudienceTracker.of(
+                entity,
+                value -> {
+                    List<PacketWrapper<?>> packets = destination.get();
+                    return VirtualViewer.of(value.id(), value.version(), packets::add);
+                },
+                ignored -> connection.get(),
+                Candidate::visible
+        );
+
+        tracker.update(candidate);
+        tracker.update(candidate);
+        assertEquals(1, candidate.packets().size());
+
+        List<PacketWrapper<?>> replacementPackets = new ArrayList<>();
+        destination.set(replacementPackets);
+        connection.set(new Object());
+        tracker.update(candidate);
+
+        assertInstanceOf(WrapperPlayServerDestroyEntities.class, candidate.packets().get(1));
+        assertInstanceOf(WrapperPlayServerSpawnEntity.class, replacementPackets.get(0));
     }
 
     private static Candidate candidate(boolean visible) {

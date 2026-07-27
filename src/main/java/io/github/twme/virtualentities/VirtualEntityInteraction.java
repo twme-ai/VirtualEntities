@@ -7,7 +7,7 @@ import com.github.retrooper.packetevents.util.Vector3d;
 import java.util.Objects;
 import java.util.Optional;
 
-/** A validated inbound interaction with a managed virtual entity. */
+/** An inbound interaction that passed manager ownership, spawn-state, visibility, and configured validator checks. */
 public record VirtualEntityInteraction(
         VirtualEntity entity,
         User actor,

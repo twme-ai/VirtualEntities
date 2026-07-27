@@ -5,7 +5,7 @@
 [![JitPack](https://jitpack.io/v/twme-ai/VirtualEntities.svg)](https://jitpack.io/#twme-ai/VirtualEntities)
 [![License](https://img.shields.io/github/license/twme-ai/VirtualEntities)](LICENSE)
 
-VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, protocol-aware viewer lifecycle management, relative, absolute, and externally synchronized movement state, readable generated metadata, atomic metadata flags and multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and validated inbound interactions.
+VirtualEntities is a platform-independent Java library for creating and controlling client-side Minecraft entities with [PacketEvents](https://github.com/retrooper/packetevents). It provides entity identity and lookup, protocol-aware viewer lifecycle management, relative, absolute, and externally synchronized movement state, readable generated metadata, atomic metadata flags and multi-entity packet updates, equipment, attributes, passengers, virtual player profiles, audience tracking, and identity/visibility-filtered inbound interactions.
 
 Metadata indexes are resolved from reviewed legacy snapshots for Minecraft 1.9.4 through 1.14.1 and data published at [kennytv.eu/entity-data](https://kennytv.eu/entity-data/) for newer releases. The merged dataset is bundled into the artifact, so entity operations never make network requests. A scheduled GitHub Actions workflow checks the upstream data daily, validates every downloaded document, and opens a reviewable update pull request when it changes. The complete audited snapshot list is in [`versions.json`](src/main/resources/entity-data/versions.json); releases without an exact upstream snapshot use the nearest bundled numeric schema at or below the requested release.
 
@@ -92,7 +92,7 @@ pig.removeViewer(packetEventsUser);
 pig.remove();
 ```
 
-Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. Use `MetadataKey.of` for custom fields.
+Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. `MetadataKey.of` may be used for a custom field name, but its PacketEvents serializer must match the canonical serializer declared by the selected schema. A mismatch is rejected before state is stored or a packet is emitted; reviewed generated keys are required for supported cross-version serializer transitions.
 
 `VirtualMetadata#get` and `contains` inspect only values explicitly assigned with `set`. They resolve keys by field name, remain type-safe for fixed and generated versioned keys, and never parse the textual defaults from entity-data. Removing a key makes it absent again:
 
@@ -118,7 +118,7 @@ The default `metadata()` builder resolves both the current PacketEvents server v
 
 Field names are resolved through the selected entity's complete inheritance chain. An unsupported version, entity name, or field fails immediately instead of sending a packet with a guessed index.
 
-Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
+Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger packets are viewer-specific: they contain only spawned passengers visible to that viewer, and both vehicle-first and passenger-first spawn orders replay the relationship. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
 
 Use `setLocationSnapshot` for an already spawned entity whose visible movement is driven by an external vehicle or packet source. It defensively replaces only the retained spawn location, sends no movement packet, and leaves `onGround` unchanged. Current viewers may temporarily differ from that snapshot; viewers added afterward spawn at the new position:
 
@@ -195,7 +195,11 @@ if (textDisplay.supports(viewer)) {
 }
 ```
 
-Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. The manager accepts only spawned entities visible to that actor, then notifies listeners registered with `onInteraction`:
+Use the same `VirtualViewer` instance for a connection across entities. Calling `addViewer` with a new transport for an existing UUID replaces the manager's canonical transport and replays other visible entities. Platforms that reuse their candidate object across reconnects should use the four-argument `VirtualAudienceTracker.of` overload and provide a connection/channel identity extractor. `entities.replaceViewer(newViewer)` is the explicit reconnect operation when no tracker owns the membership.
+
+If a transport throws during a spawn or replay, that viewer membership is removed while successful viewers and retained entity state remain intact. Re-adding the viewer retries naturally; `resyncViewer(UUID)` explicitly destroys and replays the complete snapshot for an existing membership. Packet transports are invoked after entity state locks are released and are serialized independently per viewer UUID, so a slow viewer does not block unrelated viewers.
+
+Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. Core filtering accepts only managed, spawned entities visible to that actor and rejects non-finite `INTERACT_AT` targets. This is not a complete authorization boundary: clients can forge reach and timing. Install an additional validator for world, distance, line of sight, and rate limits before listeners perform privileged actions:
 
 ```java
 VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> {
@@ -203,11 +207,19 @@ VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> 
         // Handle the virtual entity attack.
     }
 });
+
+entities.interactionValidator(interaction -> {
+    PlatformPlayer player = platformPlayer(interaction.actor());
+    return player != null
+            && player.sameWorld(interaction.entity())
+            && player.distanceSquared(interaction.entity()) <= 36.0
+            && clickRateLimiter.tryAcquire(player.id());
+});
 ```
 
 For custom transports and tests, use `VirtualViewer.of(UUID, Consumer<PacketWrapper<?>>)` instead of a PacketEvents `User`. It defaults to the server protocol version; use `VirtualViewer.of(UUID, ClientVersion, Consumer<PacketWrapper<?>>)` when the custom transport targets another client version. Viewers created from a PacketEvents `User` automatically use that user's client version for bundle fallback and version-specific teleport packets.
 
-Call `entities.close()` during plugin shutdown. It despawns and unregisters every managed virtual entity.
+Spawn locations, rotations, velocity, attribute values, and modifier amounts must be finite; invalid wire values fail before state changes. Call `entities.close()` during plugin shutdown. It best-effort despawns and unregisters every managed virtual entity, aggregates transport failures, and permanently rejects new entities or bundles afterward.
 
 ## Testing
 

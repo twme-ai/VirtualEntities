@@ -59,6 +59,13 @@ public final class MetadataKey<T> {
 
     EntityDataType<?> type(String rawDataType) {
         if (versionedTypes.isEmpty()) {
+            EntityDataType<?> canonical = EntityMetadataTypes.require(rawDataType);
+            if (!canonical.equals(type)) {
+                throw new IllegalArgumentException(
+                        "Metadata field '" + fieldName + "' uses " + canonical
+                                + " in the schema, not " + type
+                );
+            }
             return type;
         }
         EntityDataType<?> resolved = versionedTypes.get(rawDataType);

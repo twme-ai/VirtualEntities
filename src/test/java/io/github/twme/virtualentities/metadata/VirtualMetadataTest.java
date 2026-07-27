@@ -91,6 +91,16 @@ class VirtualMetadataTest {
     }
 
     @Test
+    void rejectsMismatchedCustomKeyBeforeInitialAssignment() {
+        VirtualMetadata metadata = new VirtualMetadata(registry.schema("1.21.11", "Entity"));
+        MetadataKey<Byte> wrong = MetadataKey.of("AIR_SUPPLY", EntityDataTypes.BYTE);
+
+        assertThrows(IllegalArgumentException.class, () -> metadata.set(wrong, (byte) 10));
+        assertFalse(metadata.contains(wrong));
+        assertTrue(metadata.entityData().isEmpty());
+    }
+
+    @Test
     void namedFlagsBindTheirSemanticKeysAndPreserveUnknownBits() {
         assertEquals("SHARED_FLAGS", EntityMetadataFlags.ON_FIRE.key().fieldName());
         assertEquals((byte) 0x01, EntityMetadataFlags.ON_FIRE.mask());

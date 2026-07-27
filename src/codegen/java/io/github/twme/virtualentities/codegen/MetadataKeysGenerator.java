@@ -26,6 +26,16 @@ public final class MetadataKeysGenerator {
     private static final Type VERSIONS_TYPE = new TypeToken<List<String>>() { }.getType();
     private static final Type ENTITIES_TYPE = new TypeToken<Map<String, RawEntity>>() { }.getType();
     private static final Pattern NUMERIC_VERSION = Pattern.compile("^(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?$");
+    private static final Pattern JAVA_IDENTIFIER = Pattern.compile("^[A-Za-z_$][A-Za-z0-9_$]*$");
+    private static final Set<String> JAVA_KEYWORDS = Set.of(
+            "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class",
+            "const", "continue", "default", "do", "double", "else", "enum", "extends", "final",
+            "finally", "float", "for", "goto", "if", "implements", "import", "instanceof", "int",
+            "interface", "long", "native", "new", "package", "private", "protected", "public", "return",
+            "short", "static", "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+            "transient", "try", "void", "volatile", "while", "true", "false", "null", "record", "sealed",
+            "permits", "yield", "var"
+    );
     private static final Map<String, Mapping> TYPE_MAPPINGS = mappings();
 
     private MetadataKeysGenerator() {
@@ -120,8 +130,8 @@ public final class MetadataKeysGenerator {
             Set<String> imports
     ) {
         String className = className(entityName);
-        source.append("    /** Keys declared by ").append(entityName)
-                .append(" in entity-data ").append(latestVersion).append(". */\n")
+        source.append("    /** Keys declared by ").append(javadoc(entityName))
+                .append(" in entity-data ").append(javadoc(latestVersion)).append(". */\n")
                 .append("    public static class ").append(className);
         if (entity.superClass() != null && !entity.superClass().isBlank()) {
             source.append(" extends ").append(className(entity.superClass()));
@@ -132,6 +142,7 @@ public final class MetadataKeysGenerator {
                 .append("        }\n");
 
         for (RawField field : entity.fields()) {
+            requireJavaIdentifier(field.fieldName(), "metadata field");
             Mapping latestMapping = mapping(field.dataType());
             imports.addAll(latestMapping.imports());
             List<Map.Entry<String, Mapping>> compatible = rawTypes
@@ -143,16 +154,17 @@ public final class MetadataKeysGenerator {
                     .toList();
             compatible.forEach(entry -> imports.addAll(entry.getValue().imports()));
 
-            source.append("\n        /** Metadata field {@code ").append(field.fieldName()).append("}. */\n")
+            source.append("\n        /** Metadata field {@code ").append(javadoc(field.fieldName())).append("}. */\n")
                     .append("        public static final MetadataKey<")
                     .append(latestMapping.javaType()).append("> ").append(field.fieldName())
                     .append(" = MetadataKey.versioned(\n")
-                    .append("                \"").append(field.fieldName()).append("\",\n")
+                    .append("                \"").append(javaString(field.fieldName())).append("\",\n")
                     .append("                EntityDataTypes.").append(latestMapping.constant()).append(",\n")
                     .append("                Map.ofEntries(\n");
             for (int index = 0; index < compatible.size(); index++) {
                 Map.Entry<String, Mapping> entry = compatible.get(index);
-                source.append("                        Map.entry(\"").append(entry.getKey()).append("\", EntityDataTypes.")
+                source.append("                        Map.entry(\"").append(javaString(entry.getKey()))
+                        .append("\", EntityDataTypes.")
                         .append(entry.getValue().constant()).append(")");
                 source.append(index + 1 == compatible.size() ? "\n" : ",\n");
             }
@@ -290,7 +302,9 @@ public final class MetadataKeysGenerator {
     private static void validateClassNames(Set<String> entityNames) {
         Map<String, String> owners = new HashMap<>();
         for (String entityName : entityNames) {
-            String previous = owners.putIfAbsent(className(entityName), entityName);
+            String generatedName = className(entityName);
+            requireJavaIdentifier(generatedName, "generated entity-data class");
+            String previous = owners.putIfAbsent(generatedName, entityName);
             if (previous != null) {
                 throw new IllegalStateException(
                         "Entity-data class name collision: '" + previous + "' and '" + entityName + "'"
@@ -304,7 +318,7 @@ public final class MetadataKeysGenerator {
         boolean uppercase = true;
         for (int index = 0; index < entityName.length(); index++) {
             char character = entityName.charAt(index);
-            if (!Character.isLetterOrDigit(character)) {
+            if (!isAsciiLetterOrDigit(character)) {
                 uppercase = true;
             } else if (uppercase) {
                 result.append(Character.toUpperCase(character));
@@ -317,6 +331,47 @@ public final class MetadataKeysGenerator {
             result.insert(0, "Entity");
         }
         return result.toString();
+    }
+
+    private static boolean isAsciiLetterOrDigit(char character) {
+        return character >= 'A' && character <= 'Z'
+                || character >= 'a' && character <= 'z'
+                || character >= '0' && character <= '9';
+    }
+
+    private static void requireJavaIdentifier(String value, String description) {
+        if (!JAVA_IDENTIFIER.matcher(value).matches() || JAVA_KEYWORDS.contains(value)) {
+            throw new IllegalStateException(description + " is not a safe Java identifier: '" + value + "'");
+        }
+    }
+
+    private static String javaString(String value) {
+        StringBuilder escaped = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            switch (character) {
+                case '\\' -> escaped.append("\\\\");
+                case '"' -> escaped.append("\\\"");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> {
+                    if (Character.isISOControl(character)) {
+                        escaped.append(String.format("\\u%04x", (int) character));
+                    } else {
+                        escaped.append(character);
+                    }
+                }
+            }
+        }
+        return escaped.toString();
+    }
+
+    private static String javadoc(String value) {
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("*/", "*&#47;");
     }
 
     private static Release release(String value) {
