@@ -31,7 +31,7 @@ repositories {
 dependencies {
     compileOnlyApi("com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
     compileOnlyApi("net.kyori:adventure-api:4.26.1")
-    implementation("com.google.code.gson:gson:2.13.1")
+    implementation("com.google.code.gson:gson:2.14.0")
 
     testImplementation("com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
     testImplementation("com.github.retrooper:packetevents-netty-common:${property("packetEventsVersion")}")
@@ -43,7 +43,7 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    add(codegen.implementationConfigurationName, "com.google.code.gson:gson:2.13.1")
+    add(codegen.implementationConfigurationName, "com.google.code.gson:gson:2.14.0")
     add(integrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     add(integrationPlugin.compileOnlyConfigurationName, "com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
     add(legacyIntegrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
