@@ -1,6 +1,8 @@
 package io.github.twme.virtualentities.metadata;
 
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.item.type.ItemTypes;
 import io.github.twme.virtualentities.PacketEventsTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -57,6 +59,25 @@ class VirtualMetadataTest {
         metadata.setFlag(key, (byte) 0x01, false);
         assertTrue(metadata.contains(key));
         assertEquals((byte) 0, metadata.get(key).orElseThrow());
+    }
+
+    @Test
+    void defensivelyCopiesMutableMetadataValues() {
+        VirtualMetadata metadata = new VirtualMetadata(registry.schema("26.2", "Eye Of Ender"));
+        ItemStack original = ItemStack.builder().type(ItemTypes.STONE).amount(1).build();
+        metadata.set(GeneratedEntityMetadataKeys.EyeOfEnder.ITEM_STACK, original);
+
+        original.setAmount(12);
+        ItemStack firstRead = metadata.get(GeneratedEntityMetadataKeys.EyeOfEnder.ITEM_STACK).orElseThrow();
+        assertEquals(1, firstRead.getAmount());
+
+        firstRead.setAmount(7);
+        assertEquals(1, metadata.get(GeneratedEntityMetadataKeys.EyeOfEnder.ITEM_STACK)
+                .orElseThrow().getAmount());
+
+        ItemStack wireValue = (ItemStack) metadata.entityData().get(0).getValue();
+        wireValue.setAmount(5);
+        assertEquals(1, ((ItemStack) metadata.entityData().get(0).getValue()).getAmount());
     }
 
     @Test

@@ -194,6 +194,40 @@ class VirtualEntityManagerBundleTest {
     }
 
     @Test
+    void splitsBundlesAtTheProtocolPacketLimit() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_450));
+        List<PacketWrapper<?>> packets = new ArrayList<>();
+        VirtualEntity entity = textDisplay(
+                manager,
+                viewer(UUID.randomUUID(), ClientVersion.V_1_21_11, packets),
+                new Location(0, 64, 0, 0, 0)
+        );
+        packets.clear();
+
+        manager.bundle(() -> {
+            for (int index = 0; index < 4_097; index++) {
+                entity.rotateHead(index % 360);
+            }
+        });
+
+        assertEquals(4_101, packets.size());
+        assertEquals(4, packets.stream().filter(WrapperPlayServerBundle.class::isInstance).count());
+        assertInstanceOf(WrapperPlayServerBundle.class, packets.get(0));
+        assertInstanceOf(WrapperPlayServerBundle.class, packets.get(4_097));
+        assertInstanceOf(WrapperPlayServerBundle.class, packets.get(4_098));
+        assertInstanceOf(WrapperPlayServerBundle.class, packets.get(4_100));
+    }
+
+    @Test
+    void rejectsClosingManagerInsideBundle() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_475));
+
+        assertThrows(IllegalStateException.class, () -> manager.bundle(manager::close));
+        assertFalse(manager.isClosed());
+        manager.entity(EntityTypes.PIG).build();
+    }
+
+    @Test
     void preventsConcurrentPacketsFromEnteringBundleDelimiters() throws Exception {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(2_500));
         List<PacketWrapper<?>> packets = new ArrayList<>();

@@ -38,6 +38,7 @@ public final class VirtualEntitiesIntegrationPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         entities = VirtualEntities.create();
+        entities.interactionValidator(interaction -> true);
         packetListener = new PacketListenerAbstract() {
             @Override
             public void onPacketReceive(PacketReceiveEvent event) {

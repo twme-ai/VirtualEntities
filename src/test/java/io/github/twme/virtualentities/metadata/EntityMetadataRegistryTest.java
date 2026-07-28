@@ -151,6 +151,7 @@ class EntityMetadataRegistryTest {
     void resolvesClosestVersionAndPacketEventsEntityNames() {
         assertEquals("1.21.9", registry.resolveVersion("1.21.10"));
         assertEquals("1.17", registry.resolveVersion("1.18.2"));
+        assertThrows(IllegalArgumentException.class, () -> registry.resolveVersion("27.0"));
         assertEquals("Mushroom Cow", registry.schema("1.21.11", entityType("mooshroom", null)).entityName());
 
         EntityType boat = entityType("boat", null);

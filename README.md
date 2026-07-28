@@ -49,6 +49,8 @@ dependencies {
 ```
 
 PacketEvents is intentionally a `compileOnly` dependency. Do not relocate or bundle a second PacketEvents copy when your platform already provides it.
+PacketEvents and Adventure are exposed as API dependencies in published module metadata so downstream builds can
+compile against VirtualEntities' public signatures; the server or proxy must still provide the PacketEvents runtime.
 
 ## Usage
 
@@ -93,6 +95,10 @@ pig.removeViewer(packetEventsUser);
 pig.remove();
 ```
 
+Default managers in the same library classloader share one descending entity-ID counter. Platforms that load isolated
+or relocated copies of VirtualEntities should inject a platform-global `EntityIdProvider` so independently loaded
+plugins cannot allocate the same client-side ID.
+
 Generated keys are grouped by their declaring entity-data class and inherit parent keys, so `GeneratedEntityMetadataKeys.Pig` exposes both pig fields and shared entity fields. `MetadataKey.of` may be used for a custom field name, but its PacketEvents serializer must match the canonical serializer declared by the selected schema. A mismatch is rejected before state is stored or a packet is emitted; reviewed generated keys are required for supported cross-version serializer transitions.
 
 `VirtualMetadata#get` and `contains` inspect only values explicitly assigned with `set`. They resolve keys by field name, remain type-safe for fixed and generated versioned keys, and never parse the textual defaults from entity-data. Removing a key makes it absent again:
@@ -117,7 +123,7 @@ The reviewed descriptors cover the stable common flags (`ON_FIRE`, `CROUCHING`, 
 
 The default `metadata()` builder resolves both the current PacketEvents server version and the entity-data name. When kennytv has no exact release document, VirtualEntities selects the newest bundled numeric snapshot at or before that release. PacketEvents entity aliases and parent types are resolved automatically. The explicit `metadata(version, entityDataName)` overload remains available for custom mappings.
 
-Field names are resolved through the selected entity's complete inheritance chain. An unsupported version, entity name, or field fails immediately instead of sending a packet with a guessed index.
+Field names are resolved through the selected entity's complete inheritance chain. An unsupported version, entity name, or field fails immediately instead of sending a packet with a guessed index. Missing snapshots between known releases still use the nearest earlier schema, but a release newer than the latest bundled numeric snapshot is rejected until its metadata layout has been reviewed.
 
 Equipment, attributes, and passenger lists are retained as entity state. Changes are sent immediately while spawned and replayed to late viewers or after a despawn/spawn cycle. Passenger packets are viewer-specific: they contain only spawned passengers visible to that viewer, and both vehicle-first and passenger-first spawn orders replay the relationship. Passenger entities must belong to the same manager; removing either side safely detaches the relationship.
 
@@ -147,7 +153,12 @@ entities.bundle(() -> {
 });
 ```
 
-Each affected 1.19.4 or newer viewer receives exactly one opening and closing bundle delimiter. Older clients receive the same packets unbundled and in order. Nested calls on the same thread join the outer scope; operations on other threads are not captured. Entity state changes immediately, so viewers added later receive the final snapshot.
+Each affected 1.19.4 or newer viewer receives opening and closing bundle delimiters around every protocol-sized segment. Older clients receive the same packets unbundled and in order. Nested calls on the same thread join the outer scope. Entity state changes immediately, so viewers added later receive the final snapshot.
+
+Bundles larger than Minecraft's 4,096-sub-packet protocol limit are emitted as multiple consecutive bundles. Closing
+the manager from inside a bundle callback is rejected. Visible operations on the same entity are linearized across
+threads from state mutation through packet delivery; unrelated entities can still send to unrelated viewers in
+parallel, while a manager bundle or shutdown is exclusive.
 
 Bundles do not roll back state. If the callback throws, packets queued before the failure are flushed and the original exception is rethrown. Transport failures do not prevent the manager from attempting the remaining affected viewers. The first transport failure is thrown after flushing; if the callback also failed, it is attached to the callback failure as a suppressed exception.
 
@@ -198,17 +209,11 @@ if (textDisplay.supports(viewer)) {
 
 Use the same `VirtualViewer` instance for a connection across entities. Calling `addViewer` with a new transport for an existing UUID replaces the manager's canonical transport and replays other visible entities. Platforms that reuse their candidate object across reconnects should use the four-argument `VirtualAudienceTracker.of` overload and provide a connection/channel identity extractor. `entities.replaceViewer(newViewer)` is the explicit reconnect operation when no tracker owns the membership.
 
-If a transport throws during a spawn or replay, that viewer membership is removed while successful viewers and retained entity state remain intact. Re-adding the viewer retries naturally; `resyncViewer(UUID)` explicitly destroys and replays the complete snapshot for an existing membership. Packet transports are invoked after entity state locks are released and are serialized independently per viewer UUID, so a slow viewer does not block unrelated viewers.
+If a transport throws during a spawn, replay, or ordinary state update, that entity's viewer membership is removed while delivery continues for the remaining viewers. Re-adding the viewer retries naturally; `resyncViewer(UUID)` explicitly destroys and replays the complete snapshot for an existing membership. The manager releases the canonical transport and send lock after the UUID's last entity membership is removed. Packet transports are invoked after entity state monitors are released and are serialized independently per viewer UUID, so a slow viewer does not block unrelated entities and viewers.
 
-Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. Core filtering accepts only managed, spawned entities visible to that actor and rejects non-finite `INTERACT_AT` targets. This is not a complete authorization boundary: clients can forge reach and timing. Install an additional validator for world, distance, line of sight, and rate limits before listeners perform privileged actions:
+Forward PacketEvents interact packets to `VirtualEntityManager#handleInteraction`. Core filtering accepts only managed, spawned entities visible to that actor and rejects non-finite `INTERACT_AT` targets. Interaction dispatch is fail-closed: the default validator rejects every packet. Install a validator for world, distance, line of sight, and rate limits before registering privileged listeners or forwarding packets:
 
 ```java
-VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> {
-    if (interaction.action() == VirtualEntityInteraction.Action.ATTACK) {
-        // Handle the virtual entity attack.
-    }
-});
-
 entities.interactionValidator(interaction -> {
     PlatformPlayer player = platformPlayer(interaction.actor());
     return player != null
@@ -216,11 +221,17 @@ entities.interactionValidator(interaction -> {
             && player.distanceSquared(interaction.entity()) <= 36.0
             && clickRateLimiter.tryAcquire(player.id());
 });
+
+VirtualEntityInteraction.Subscription clicks = pig.onInteraction(interaction -> {
+    if (interaction.action() == VirtualEntityInteraction.Action.ATTACK) {
+        // Handle the authorized virtual entity attack.
+    }
+});
 ```
 
 For custom transports and tests, use `VirtualViewer.of(UUID, Consumer<PacketWrapper<?>>)` instead of a PacketEvents `User`. It defaults to the server protocol version; use `VirtualViewer.of(UUID, ClientVersion, Consumer<PacketWrapper<?>>)` when the custom transport targets another client version. Viewers created from a PacketEvents `User` automatically use that user's client version for bundle fallback and version-specific teleport packets.
 
-Spawn locations, rotations, velocity, attribute values, and modifier amounts must be finite; invalid wire values fail before state changes. Call `entities.close()` during plugin shutdown. It best-effort despawns and unregisters every managed virtual entity, aggregates transport failures, and permanently rejects new entities or bundles afterward.
+Spawn locations, rotations, velocity, attribute values, and modifier amounts must be finite; invalid wire values fail before state changes. Mutable `ItemStack` and NBT metadata values are retained and returned as defensive copies. Call `entities.close()` during plugin shutdown, outside a bundle callback. It best-effort despawns and unregisters every managed virtual entity, aggregates transport failures, and permanently rejects new entities or bundles afterward.
 
 ## Testing
 
@@ -238,9 +249,9 @@ The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.1
 ./gradlew mineflayerE2e
 ```
 
-The E2E task requires Java 21 or newer, Node.js 22 or newer, `curl`, `jq`, and network access. It downloads checksummed server/plugin artifacts into `build`, accepts the Minecraft EULA only inside a temporary test server, and removes the generated world and server process on exit. The same task is available from the repository's manually triggered `Mineflayer E2E` workflow.
+The E2E task requires Java 21 or newer, Node.js 22 or newer, `curl`, `jq`, and network access. It downloads checksummed server/plugin artifacts into `build`, accepts the Minecraft EULA only inside a temporary test server, and removes the generated world and server process on exit. The same task runs for pull requests and main-branch changes, and is a required dependency of the release workflow.
 
-The legacy black-box workflow builds the core and fixture as Java 17 bytecode, switches the runner to a Java 17 JVM, then tests Paper 1.9.4, 1.12.2, and 1.13.2. It verifies living spawn packets, legacy string metadata, equipment, passengers, relative movement, and inbound attacks. Run one matrix entry locally with:
+The legacy black-box workflow builds the core and fixture as Java 17 bytecode, switches the runner to a Java 17 JVM, then tests Paper 1.9.4, 1.12.2, and 1.13.2 for pull requests, main-branch changes, and releases. It verifies living spawn packets, legacy string metadata, equipment, passengers, relative movement, and inbound attacks. Run one matrix entry locally with:
 
 ```bash
 ./gradlew legacyIntegrationPluginJar

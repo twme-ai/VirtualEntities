@@ -124,6 +124,18 @@ public final class EntityMetadataRegistry {
         Release requested = Release.parse(requestedVersion).orElseThrow(() ->
                 new IllegalArgumentException("Unsupported entity-data version '" + requestedVersion + "'"));
 
+        Release newest = versionOrder.stream()
+                .map(Release::parse)
+                .flatMap(Optional::stream)
+                .max(Release::compareTo)
+                .orElseThrow(() -> new IllegalStateException("No numeric entity-data snapshots are bundled"));
+        if (requested.compareTo(newest) > 0) {
+            throw new IllegalArgumentException(
+                    "Entity-data version '" + requestedVersion + "' is newer than the latest bundled snapshot '"
+                            + newest + "'"
+            );
+        }
+
         return versionOrder.stream()
                 .map(version -> Release.parse(version).map(release -> Map.entry(version, release)))
                 .flatMap(Optional::stream)
@@ -265,6 +277,11 @@ public final class EntityMetadataRegistry {
                     .thenComparingInt(Release::minor)
                     .thenComparingInt(Release::patch)
                     .compare(this, other);
+        }
+
+        @Override
+        public String toString() {
+            return major + "." + minor + "." + patch;
         }
     }
 }

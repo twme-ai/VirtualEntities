@@ -47,6 +47,8 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -122,7 +124,7 @@ class VirtualEntityTest {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(300));
         VirtualEntity vehicle = manager.entity(testType()).build();
         VirtualEntity passenger = manager.entity(testType()).build();
-        ItemStack helmet = mock(ItemStack.class);
+        ItemStack helmet = ItemStack.EMPTY;
         Attribute maxHealth = mock(Attribute.class);
 
         vehicle.setEquipment(EquipmentSlot.HELMET, helmet)
@@ -269,7 +271,7 @@ class VirtualEntityTest {
         VirtualEntity passenger = manager.entity(testType()).build()
                 .addViewer(viewer)
                 .spawn(new Location(0, 65, 0, 0, 0));
-        ItemStack helmet = mock(ItemStack.class);
+        ItemStack helmet = ItemStack.EMPTY;
         Attribute maxHealth = mock(Attribute.class);
         when(maxHealth.getDefaultValue()).thenReturn(20.0);
 
@@ -471,6 +473,84 @@ class VirtualEntityTest {
     }
 
     @Test
+    void linearizesConcurrentUpdatesForTheSameEntity() {
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            CountDownLatch firstDeliveryStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirstDelivery = new CountDownLatch(1);
+            CountDownLatch secondUpdateStarted = new CountDownLatch(1);
+            VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1150))
+                    .entity(testType())
+                    .build()
+                    .addViewer(VirtualViewer.of(UUID.randomUUID(), packet -> {
+                        if (packet instanceof WrapperPlayServerEntityPositionSync) {
+                            firstDeliveryStarted.countDown();
+                            awaitTransportRelease(releaseFirstDelivery);
+                        }
+                    }))
+                    .spawn(new Location(0, 64, 0, 0, 0));
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                var first = executor.submit(() -> entity.teleport(new Location(1, 64, 0, 0, 0)));
+                assertTrue(firstDeliveryStarted.await(1, TimeUnit.SECONDS));
+                var second = executor.submit(() -> {
+                    secondUpdateStarted.countDown();
+                    return entity.teleport(new Location(2, 64, 0, 0, 0));
+                });
+                assertTrue(secondUpdateStarted.await(1, TimeUnit.SECONDS));
+
+                assertFalse(second.isDone());
+                assertEquals(1, entity.location().getX());
+
+                releaseFirstDelivery.countDown();
+                first.get(1, TimeUnit.SECONDS);
+                second.get(1, TimeUnit.SECONDS);
+                assertEquals(2, entity.location().getX());
+            } finally {
+                releaseFirstDelivery.countDown();
+                executor.shutdownNow();
+            }
+        });
+    }
+
+    @Test
+    void slowTransportDoesNotBlockAnUnrelatedEntity() {
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1175));
+            CountDownLatch deliveryStarted = new CountDownLatch(1);
+            CountDownLatch releaseDelivery = new CountDownLatch(1);
+            VirtualEntity slowEntity = manager.entity(testType()).build()
+                    .addViewer(VirtualViewer.of(UUID.randomUUID(), packet -> {
+                        if (packet instanceof WrapperPlayServerEntityPositionSync) {
+                            deliveryStarted.countDown();
+                            awaitTransportRelease(releaseDelivery);
+                        }
+                    }))
+                    .spawn(new Location(0, 64, 0, 0, 0));
+            VirtualEntity independentEntity = manager.entity(testType()).build()
+                    .addViewer(VirtualViewer.of(UUID.randomUUID(), packet -> { }))
+                    .spawn(new Location(0, 64, 0, 0, 0));
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                var slowUpdate = executor.submit(
+                        () -> slowEntity.teleport(new Location(1, 64, 0, 0, 0)));
+                assertTrue(deliveryStarted.await(1, TimeUnit.SECONDS));
+
+                executor.submit(() -> independentEntity.teleport(new Location(2, 64, 0, 0, 0)))
+                        .get(1, TimeUnit.SECONDS);
+                assertEquals(2, independentEntity.location().getX());
+
+                releaseDelivery.countDown();
+                slowUpdate.get(1, TimeUnit.SECONDS);
+            } finally {
+                releaseDelivery.countDown();
+                executor.shutdownNow();
+            }
+        });
+    }
+
+    @Test
     void selectsRelativeMovementOrTeleportFromAbsoluteUpdates() {
         List<PacketWrapper<?>> packets = new ArrayList<>();
         VirtualEntity entity = VirtualEntities.create(new AtomicEntityIdProvider(1100))
@@ -543,7 +623,7 @@ class VirtualEntityTest {
     @Test
     void filtersViewersByEntityTypeProtocolSupport() {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1_175));
-        ItemStack helmet = mock(ItemStack.class);
+        ItemStack helmet = ItemStack.EMPTY;
         Attribute attribute = mock(Attribute.class);
         VirtualEntity passenger = manager.entity(EntityTypes.PIG).build();
         VirtualEntity textDisplay = manager.entity(EntityTypes.TEXT_DISPLAY)
@@ -568,6 +648,7 @@ class VirtualEntityTest {
 
         assertFalse(textDisplay.supports(ClientVersion.V_1_19_3));
         assertTrue(textDisplay.supports(ClientVersion.V_1_19_4));
+        assertFalse(passenger.supports(ClientVersion.V_1_8));
         assertFalse(textDisplay.supports(legacy));
         assertTrue(textDisplay.supports(modern));
         assertFalse(happyGhast.supports(ClientVersion.V_1_21_5));
@@ -621,6 +702,10 @@ class VirtualEntityTest {
                 InteractionHand.MAIN_HAND,
                 true
         );
+        assertTrue(manager.handleInteraction(actor, packet).isEmpty());
+        assertTrue(received.isEmpty());
+
+        manager.interactionValidator(interaction -> true);
         VirtualEntityInteraction interaction = manager.handleInteraction(actor, packet).orElseThrow();
         assertEquals(VirtualEntityInteraction.Action.INTERACT_AT, interaction.action());
         assertEquals(InteractionHand.MAIN_HAND, interaction.hand().orElseThrow());
@@ -750,6 +835,56 @@ class VirtualEntityTest {
     }
 
     @Test
+    void defaultManagersShareEntityIdAllocation() {
+        VirtualEntity first = VirtualEntities.create().entity(testType()).build();
+        VirtualEntity second = VirtualEntities.create().entity(testType()).build();
+
+        assertTrue(first.entityId() != second.entityId());
+    }
+
+    @Test
+    void releasesViewerTransportAfterLastMembership() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1700));
+        UUID viewerId = UUID.randomUUID();
+        VirtualViewer viewer = VirtualViewer.of(viewerId, packet -> { });
+        VirtualEntity first = manager.entity(testType()).build().addViewer(viewer);
+        VirtualEntity second = manager.entity(testType()).build().addViewer(viewer);
+
+        first.removeViewer(viewerId);
+        manager.replaceViewer(VirtualViewer.of(viewerId, packet -> { }));
+        second.removeViewer(viewerId);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> manager.replaceViewer(VirtualViewer.of(viewerId, packet -> { })));
+    }
+
+    @Test
+    void isolatesUpdateTransportFailuresAcrossViewers() {
+        VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1750));
+        UUID failedId = UUID.randomUUID();
+        UUID successfulId = UUID.randomUUID();
+        AtomicInteger failedPackets = new AtomicInteger();
+        List<PacketWrapper<?>> successfulPackets = new ArrayList<>();
+        VirtualViewer failed = VirtualViewer.of(failedId, packet -> {
+            if (failedPackets.incrementAndGet() > 1) {
+                throw new IllegalStateException("transport failed");
+            }
+        });
+        VirtualEntity entity = manager.entity(testType()).build()
+                .addViewer(failed)
+                .addViewer(VirtualViewer.of(successfulId, successfulPackets::add))
+                .spawn(new Location(0, 64, 0, 0, 0));
+        successfulPackets.clear();
+
+        assertThrows(IllegalStateException.class,
+                () -> entity.teleport(new Location(1, 64, 0, 0, 0)));
+
+        assertFalse(entity.hasViewer(failedId));
+        assertTrue(entity.hasViewer(successfulId));
+        assertEquals(1, successfulPackets.size());
+    }
+
+    @Test
     void managerCloseCleansEveryEntityWhenATransportFails() {
         VirtualEntityManager manager = VirtualEntities.create(new AtomicEntityIdProvider(1650));
         manager.entity(testType()).build()
@@ -764,6 +899,15 @@ class VirtualEntityTest {
         assertThrows(IllegalStateException.class, manager::close);
         assertTrue(manager.isClosed());
         assertTrue(manager.entities().isEmpty());
+    }
+
+    private static void awaitTransportRelease(CountDownLatch release) {
+        try {
+            release.await();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Transport wait was interrupted", interrupted);
+        }
     }
 
     private static EntityType namedType(String name) {

@@ -8,7 +8,14 @@ permissions:
   contents: write
 
 jobs:
+  modern-e2e:
+    uses: ./.github/workflows/e2e.yml
+
+  legacy-e2e:
+    uses: ./.github/workflows/legacy-e2e.yml
+
   release:
+    needs: [modern-e2e, legacy-e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

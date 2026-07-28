@@ -3,6 +3,8 @@ package io.github.twme.virtualentities.metadata;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.nbt.NBTCompound;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,7 +30,7 @@ public final class VirtualMetadata {
     public synchronized <T> VirtualMetadata set(MetadataKey<T> key, T value) {
         Objects.requireNonNull(key, "key");
         MetadataField field = schema.require(key.fieldName());
-        T checkedValue = Objects.requireNonNull(value, "value");
+        T checkedValue = copy(Objects.requireNonNull(value, "value"));
         values.put(
                 key.fieldName(),
                 new Value(
@@ -57,7 +59,7 @@ public final class VirtualMetadata {
                     "Metadata key type does not match the explicitly assigned value for '" + key.fieldName() + "'"
             );
         }
-        return Optional.of((T) value.logicalValue());
+        return Optional.of(copy((T) value.logicalValue()));
     }
 
     /** Returns whether a value has been explicitly assigned for the key's field name. */
@@ -183,7 +185,24 @@ public final class VirtualMetadata {
     ) {
         @SuppressWarnings({"rawtypes", "unchecked"})
         private EntityData<?> toEntityData() {
-            return new EntityData(index, type, wireValue);
+            return new EntityData(index, type, copy(wireValue));
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T copy(T value) {
+        if (value instanceof ItemStack itemStack) {
+            return (T) itemStack.copy();
+        }
+        if (value instanceof NBTCompound compound) {
+            return (T) compound.copy();
+        }
+        if (value instanceof Optional<?> optional) {
+            return (T) optional.map(VirtualMetadata::copy);
+        }
+        if (value instanceof List<?> list) {
+            return (T) list.stream().map(VirtualMetadata::copy).toList();
+        }
+        return value;
     }
 }
