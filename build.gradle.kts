@@ -38,7 +38,7 @@ dependencies {
     testImplementation("io.netty:netty-all:4.1.136.Final")
     testImplementation("net.kyori:adventure-api:4.26.1")
     testImplementation("net.kyori:adventure-nbt:4.26.1")
-    testImplementation("org.mockito:mockito-core:5.18.0")
+    testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
