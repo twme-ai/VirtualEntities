@@ -30,14 +30,14 @@ repositories {
 
 dependencies {
     compileOnlyApi("com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
-    compileOnlyApi("net.kyori:adventure-api:4.26.1")
+    compileOnlyApi("net.kyori:adventure-api:5.2.0")
     implementation("com.google.code.gson:gson:2.14.0")
 
     testImplementation("com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
     testImplementation("com.github.retrooper:packetevents-netty-common:${property("packetEventsVersion")}")
     testImplementation("io.netty:netty-all:4.1.136.Final")
-    testImplementation("net.kyori:adventure-api:4.26.1")
-    testImplementation("net.kyori:adventure-nbt:4.26.1")
+    testImplementation("net.kyori:adventure-api:5.2.0")
+    testImplementation("net.kyori:adventure-nbt:5.2.0")
     testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation(platform("org.junit:junit-bom:6.1.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
