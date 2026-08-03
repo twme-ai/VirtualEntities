@@ -44,9 +44,9 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     add(codegen.implementationConfigurationName, "com.google.code.gson:gson:2.14.0")
-    add(integrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    add(integrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:26.2.build.87-stable")
     add(integrationPlugin.compileOnlyConfigurationName, "com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
-    add(legacyIntegrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    add(legacyIntegrationPlugin.compileOnlyConfigurationName, "io.papermc.paper:paper-api:26.2.build.87-stable")
     add(legacyIntegrationPlugin.compileOnlyConfigurationName, "com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
 }
 
