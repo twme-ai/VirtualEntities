@@ -35,7 +35,7 @@ dependencies {
 
     testImplementation("com.github.retrooper:packetevents-api:${property("packetEventsVersion")}")
     testImplementation("com.github.retrooper:packetevents-netty-common:${property("packetEventsVersion")}")
-    testImplementation("io.netty:netty-all:4.1.136.Final")
+    testImplementation("io.netty:netty-all:4.2.16.Final")
     testImplementation("net.kyori:adventure-api:4.26.1")
     testImplementation("net.kyori:adventure-nbt:4.26.1")
     testImplementation("org.mockito:mockito-core:5.23.0")
