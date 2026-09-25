@@ -40,6 +40,7 @@ final class EntityMetadataTypes {
             case "CopperGolemState" -> EntityDataTypes.COPPER_GOLEM_STATE;
             case "WeatheringCopper.WeatherState" -> EntityDataTypes.WEATHERING_COPPER_STATE;
             case "Armadillo.ArmadilloState" -> EntityDataTypes.ARMADILLO_STATE;
+            case "DyeColor" -> EntityDataTypes.DYE_COLOR;
             case "FrogVariant", "Holder<FrogVariant>" -> EntityDataTypes.TYPED_FROG_VARIANT;
             case "CatVariant", "Holder<CatVariant>" -> EntityDataTypes.TYPED_CAT_VARIANT;
             case "Holder<ChickenVariant>" -> EntityDataTypes.CHICKEN_VARIANT;

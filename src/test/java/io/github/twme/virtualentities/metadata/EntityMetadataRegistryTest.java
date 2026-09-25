@@ -301,13 +301,18 @@ class EntityMetadataRegistryTest {
     @Test
     void resolvesTextDisplayMetadataAtOldestAndLatestBundledVersions() {
         EntityMetadataSchema oldest = registry.schema("1.19.4", EntityTypes.TEXT_DISPLAY);
-        EntityMetadataSchema latest = registry.schema("26.2", EntityTypes.TEXT_DISPLAY);
+        EntityMetadataSchema latest = registry.schema("26.3", EntityTypes.TEXT_DISPLAY);
+        EntityMetadataSchema previous = registry.schema("26.2", EntityTypes.TEXT_DISPLAY);
 
         assertEquals("Text Display", oldest.entityName());
         assertEquals(10, oldest.require("TRANSLATION").index());
         assertEquals(22, oldest.require("TEXT").index());
         assertEquals(11, latest.require("TRANSLATION").index());
         assertEquals(23, latest.require("TEXT").index());
+
+        assertEquals("26.3", registry.resolveVersion("26.3"));
+        assertEquals(previous.require("TEXT").index(), latest.require("TEXT").index());
+        assertEquals(previous.require("TRANSLATION").index(), latest.require("TRANSLATION").index());
 
         Vector3f translation = new Vector3f(1, 2, 3);
         VirtualMetadata metadata = new VirtualMetadata(oldest);
@@ -319,13 +324,21 @@ class EntityMetadataRegistryTest {
     @Test
     void usesTheRotationSerializerForArmorStandPosesAcrossTheSupportedRange() {
         Vector3f pose = new Vector3f(10, 20, 30);
-        for (String version : List.of("1.9.4", "1.21.11", "26.2")) {
+        for (String version : List.of("1.9.4", "1.21.11", "26.2", "26.3")) {
             VirtualMetadata metadata = new VirtualMetadata(registry.schema(version, EntityTypes.ARMOR_STAND));
             metadata.set(GeneratedEntityMetadataKeys.ArmorStand.HEAD_POSE, pose);
 
             assertEquals(pose, metadata.get(GeneratedEntityMetadataKeys.ArmorStand.HEAD_POSE).orElseThrow());
             assertSame(EntityDataTypes.ROTATION, metadata.entityData().get(0).getType());
         }
+    }
+
+    @Test
+    void resolvesTheCushionEntityIntroducedInTheLatestBundledSnapshot() {
+        EntityMetadataSchema cushion = registry.schema("26.3", EntityTypes.CUSHION);
+
+        assertEquals("Cushion", cushion.entityName());
+        assertEquals(new MetadataField(8, "DyeColor", "COLOR", "DyeColor.WHITE"), cushion.require("COLOR"));
     }
 
     @Test

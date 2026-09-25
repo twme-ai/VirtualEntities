@@ -252,6 +252,8 @@ public final class MetadataKeysGenerator {
                 "com.github.retrooper.packetevents.protocol.entity.data.struct.WeatheringCopperState");
         add(result, "Armadillo.ArmadilloState", "ArmadilloState", "ARMADILLO_STATE",
                 "com.github.retrooper.packetevents.protocol.entity.armadillo.ArmadilloState");
+        add(result, "DyeColor", "DyeColor", "DYE_COLOR",
+                "com.github.retrooper.packetevents.protocol.color.DyeColor");
         addVariantMappings(result);
         return Map.copyOf(result);
     }
