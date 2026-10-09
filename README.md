@@ -243,7 +243,7 @@ The normal verification gate runs unit, protocol-boundary, generated-source, con
 ./gradlew clean build
 ```
 
-The all-entity matrices are data-driven and expand automatically when PacketEvents or bundled entity-data changes. At `0.9.0` they cover every one of the 5,257 snapshot/entity schemas, every one of the 7,017 registered server-version/entity schema combinations, and actual Netty encoding for all 7,017 corresponding spawn sequences. Abstract entity-data classes and snapshot-only classes are covered by the schema matrix; every concrete PacketEvents type registered for each of the 60 supported server protocol versions is also covered by the wire matrix. Reviewed unsupported snapshot fields must be listed explicitly in the test and cannot silently skip a case.
+The all-entity matrices are data-driven and expand automatically when PacketEvents or bundled entity-data changes. At `0.10.0` they cover every one of the 5,257 snapshot/entity schemas, every one of the 7,017 registered server-version/entity schema combinations, and actual Netty encoding for all 7,017 corresponding spawn sequences. Abstract entity-data classes and snapshot-only classes are covered by the schema matrix; every concrete PacketEvents type registered for each of the 60 supported server protocol versions is also covered by the wire matrix. Reviewed unsupported snapshot fields must be listed explicitly in the test and cannot silently skip a case.
 
 The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.14.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, an attack routed back through `handleInteraction`, and an atomic Text Display translation plus root-anchor relocation bundle:
 
@@ -278,7 +278,7 @@ node tools/verify-entity-data.mjs
 
 The source JSON is retained under `src/main/resources/entity-data` for auditability. Immutable legacy inputs and their pinned Mojang server hashes and Spigot BuildData commits live under `data/legacy-entity-data`. Run `./tools/verify-legacy-entity-data-sources.sh` to revalidate those pins. The sync command merges both data sources, regenerates `GeneratedEntityMetadataKeys`, and verifies every entity inheritance chain plus the reviewed semantic flag manifest. CI rejects stale generated code, an unmapped upstream data type, or a schema that violates the all-snapshot assertions. Runtime schemas are loaded lazily and cached by Minecraft version.
 
-The issue request uses `25.2` as an audit-range label. Mojang's official version manifest has no release identifier named `25.2`; the latest 2025 release identifier is `1.21.11`. The semantic audit therefore checks every bundled snapshot through that range and also checks the later bundled `26.1` and `26.2` snapshots.
+The issue request uses `25.2` as an audit-range label. Mojang's official version manifest has no release identifier named `25.2`; the latest 2025 release identifier is `1.21.11`. The semantic audit therefore checks every bundled snapshot through that range and also checks the later bundled `26.1`, `26.2`, `26.3`, and `26.4` snapshots.
 
 ## Scope
 
