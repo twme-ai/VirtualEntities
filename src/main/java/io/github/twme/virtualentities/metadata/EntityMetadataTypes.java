@@ -15,6 +15,7 @@ final class EntityMetadataTypes {
             case "Float" -> EntityDataTypes.FLOAT;
             case "Long" -> EntityDataTypes.LONG;
             case "Boolean" -> EntityDataTypes.BOOLEAN;
+            case "DyeColor" -> EntityDataTypes.DYE_COLOR;
             case "String" -> EntityDataTypes.STRING;
             case "OptionalInt", "Optional<Integer>" -> EntityDataTypes.OPTIONAL_INT;
             case "Component", "ITextComponent" -> EntityDataTypes.ADV_COMPONENT;

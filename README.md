@@ -12,7 +12,7 @@ Metadata indexes are resolved from reviewed legacy snapshots for Minecraft 1.9.4
 ## Requirements
 
 - Java 17 or newer
-- PacketEvents 2.13.0 installed by the server/proxy or supplied by your plugin
+- PacketEvents 2.14.0 installed by the server/proxy or supplied by your plugin
 - Minecraft server 1.9.4 or newer
 
 The entity lifecycle API itself is not tied to a Bukkit, Paper, or Velocity API. It works anywhere PacketEvents exposes a `User`.
@@ -24,9 +24,11 @@ Java and Minecraft compatibility are independent. VirtualEntities is compiled fo
 | Range | Status | Evidence |
 |---|---|---|
 | Minecraft 1.9.4-1.13.2 | Supported on Java 17 | Reviewed metadata snapshots, protocol-boundary tests, and Paper + Mineflayer E2E on 1.9.4, 1.12.2, and 1.13.2 |
-| Minecraft 1.14-current bundled releases | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, exhaustive schema/spawn wire matrices, and the current Paper + Mineflayer E2E |
-| Minecraft 26w14a snapshot | Partially supported on Java 17+ | Every class is structurally audited. PacketEvents 2.13.0 has no serializer for the discarded experimental `Living Block` `MovementData`/`Target` fields, so that one runtime schema is rejected explicitly. |
+| Minecraft 1.14-26.3 | Supported on Java 17+ | Reviewed 1.14 patch transitions, kennytv entity-data, exhaustive schema/spawn wire matrices, and the current Paper + Mineflayer E2E |
+| Minecraft 26w14a snapshot | Partially supported on Java 17+ | Every class is structurally audited. PacketEvents 2.14.0 has no serializer for the discarded experimental `Living Block` `MovementData`/`Target` fields, so that one runtime schema is rejected explicitly. |
 | Minecraft 1.8.8 and older | Not supported | Requires a separate boolean-as-byte metadata codec and pre-1.9 single-passenger attach semantics |
+
+The bundled 26.4 snapshot is validated as schema data. PacketEvents 2.14.0 exposes server protocols through 26.3, so bundling 26.4 data does not establish 26.4 protocol support.
 
 The legacy compatibility layer selects the historical living-entity, player, painting, lightning, and experience-orb spawn packets and preserves the pre-1.15 embedded metadata layout. It also converts the logical `Optional<Component>` custom-name API to the pre-1.13 string serializer while retaining the logical value returned by `VirtualMetadata#get`.
 
@@ -44,7 +46,7 @@ repositories {
 
 dependencies {
     implementation("com.github.twme-ai:VirtualEntities:VERSION")
-    compileOnly("com.github.retrooper:packetevents-api:2.13.0")
+    compileOnly("com.github.retrooper:packetevents-api:2.14.0")
 }
 ```
 
@@ -241,9 +243,9 @@ The normal verification gate runs unit, protocol-boundary, generated-source, con
 ./gradlew clean build
 ```
 
-The all-entity matrices are data-driven and expand automatically when PacketEvents or bundled entity-data changes. At `0.9.0` they cover every one of the 4,877 snapshot/entity schemas, every one of the 6,856 registered server-version/entity schema combinations, and actual Netty encoding for all 6,856 corresponding spawn sequences. Abstract entity-data classes and snapshot-only classes are covered by the schema matrix; every concrete PacketEvents type registered for each of the 59 supported server protocol versions is also covered by the wire matrix. Reviewed unsupported snapshot fields must be listed explicitly in the test and cannot silently skip a case.
+The all-entity matrices are data-driven and expand automatically when PacketEvents or bundled entity-data changes. At `0.9.0` they cover every one of the 5,257 snapshot/entity schemas, every one of the 7,017 registered server-version/entity schema combinations, and actual Netty encoding for all 7,017 corresponding spawn sequences. Abstract entity-data classes and snapshot-only classes are covered by the schema matrix; every concrete PacketEvents type registered for each of the 60 supported server protocol versions is also covered by the wire matrix. Reviewed unsupported snapshot fields must be listed explicitly in the test and cannot silently skip a case.
 
-The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.13.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, an attack routed back through `handleInteraction`, and an atomic Text Display translation plus root-anchor relocation bundle:
+The black-box gate starts a temporary Paper 1.21.11 server with PacketEvents 2.14.0 and drives it with Mineflayer. It validates spawn decoding, metadata-backed entity identity, relative movement, an attack routed back through `handleInteraction`, and an atomic Text Display translation plus root-anchor relocation bundle:
 
 ```bash
 ./gradlew mineflayerE2e

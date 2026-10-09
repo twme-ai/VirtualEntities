@@ -3,7 +3,7 @@
   "requestedRange": {
     "minimum": "1.9.4",
     "maximum": "25.2",
-    "bundledBeyondRequestedRange": ["26.1", "26.2"],
+    "bundledBeyondRequestedRange": ["26.1", "26.2", "26.3", "26.4"],
     "bundledNonReleaseSnapshots": ["26w14a"],
     "note": "The official Mojang version manifest has no release identifier named 25.2. The latest 2025 release identifier is 1.21.11; 25.2 is retained here as the requested audit label."
   },

@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.PacketEventsAPI;
 import com.github.retrooper.packetevents.manager.server.ServerManager;
 import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.settings.PacketEventsSettings;
+import com.github.retrooper.packetevents.util.LogManager;
 import io.github.retrooper.packetevents.impl.netty.NettyManagerImpl;
 
 import static org.mockito.Mockito.mock;
@@ -20,6 +21,7 @@ public final class PacketEventsTestSupport {
         when(api.getServerManager()).thenReturn(serverManager);
         when(api.getNettyManager()).thenReturn(new NettyManagerImpl());
         when(api.getSettings()).thenReturn(new PacketEventsSettings());
+        when(api.getLogManager()).thenReturn(mock(LogManager.class));
         when(serverManager.getVersion()).thenReturn(ServerVersion.V_1_21_11);
         PacketEvents.setAPI(api);
         return serverManager;

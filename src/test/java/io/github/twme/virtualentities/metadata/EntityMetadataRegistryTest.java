@@ -1,5 +1,6 @@
 package io.github.twme.virtualentities.metadata;
 
+import com.github.retrooper.packetevents.protocol.color.DyeColor;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
@@ -164,13 +165,31 @@ class EntityMetadataRegistryTest {
         List<String> unresolved = new ArrayList<>();
         for (EntityType type : EntityTypes.values()) {
             try {
-                registry.schema("1.21.11", type);
+                registry.schema(ServerVersion.getLatest().getReleaseName(), type);
             } catch (IllegalArgumentException exception) {
                 unresolved.add(type.getName().toString());
             }
         }
 
         assertEquals(List.of(), unresolved);
+    }
+
+    @Test
+    void resolvesAndStoresTypedCushionColorsInNewSnapshots() {
+        for (String version : List.of("26.3", "26.4")) {
+            EntityMetadataSchema schema = registry.schema(version, "Cushion");
+            assertEquals("DyeColor", schema.require("COLOR").dataType());
+            assertEquals(8, schema.require("COLOR").index());
+            assertSame(EntityDataTypes.DYE_COLOR, EntityMetadataTypes.require("DyeColor"));
+
+            VirtualMetadata metadata = new VirtualMetadata(schema);
+            metadata.set(GeneratedEntityMetadataKeys.Cushion.COLOR, DyeColor.RED);
+
+            assertEquals(DyeColor.RED, metadata.get(GeneratedEntityMetadataKeys.Cushion.COLOR).orElseThrow());
+            assertEquals(8, metadata.entityData().get(0).getIndex());
+            assertSame(EntityDataTypes.DYE_COLOR, metadata.entityData().get(0).getType());
+            assertEquals(DyeColor.RED, metadata.entityData().get(0).getValue());
+        }
     }
 
     @Test
