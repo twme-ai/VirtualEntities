@@ -195,6 +195,8 @@ public final class MetadataKeysGenerator {
         add(result, "Float", "Float", "FLOAT");
         add(result, "Long", "Long", "LONG");
         add(result, "Boolean", "Boolean", "BOOLEAN");
+        add(result, "DyeColor", "DyeColor", "DYE_COLOR",
+                "com.github.retrooper.packetevents.protocol.color.DyeColor");
         add(result, "String", "String", "STRING");
         add(result, "OptionalInt", "Optional<Integer>", "OPTIONAL_INT", "java.util.Optional");
         add(result, "Optional<Integer>", "Optional<Integer>", "OPTIONAL_INT", "java.util.Optional");
