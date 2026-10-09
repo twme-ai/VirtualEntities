@@ -7,6 +7,7 @@ import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.world.Location;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAttack;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import io.github.twme.virtualentities.VirtualEntities;
 import io.github.twme.virtualentities.VirtualEntity;
@@ -44,6 +45,8 @@ public final class VirtualEntitiesIntegrationPlugin extends JavaPlugin {
             public void onPacketReceive(PacketReceiveEvent event) {
                 if (event.getPacketType() == PacketType.Play.Client.INTERACT_ENTITY) {
                     entities.handleInteraction(event.getUser(), new WrapperPlayClientInteractEntity(event));
+                } else if (event.getPacketType() == PacketType.Play.Client.ATTACK) {
+                    entities.handleInteraction(event.getUser(), new WrapperPlayClientAttack(event));
                 }
             }
         };
